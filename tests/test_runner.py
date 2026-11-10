@@ -143,3 +143,14 @@ def test_run_writes_the_report(tmp_path):
     assert [path.rsplit(".", 1)[1] for path in summary.report_paths] == ["xlsx", "csv"]
     reports = tmp_path / "data" / "acme" / "reports"
     assert sorted(p.suffix for p in reports.iterdir()) == [".csv", ".xlsx"]
+
+
+def test_report_failure_is_a_warning_not_a_failed_run(tmp_path, monkeypatch):
+    def broken(*args, **kwargs):
+        raise PermissionError("file is open in Excel")
+
+    monkeypatch.setattr("pricemon.runner.write_report", broken)
+    summary = run(healthy_site(), tmp_path)
+    assert (summary.urls_ok, summary.urls_failed) == (3, 0)
+    assert summary.report_paths == []
+    assert summary.warnings == ["report not written: PermissionError: file is open in Excel"]

@@ -1,4 +1,5 @@
 import pytest
+from openpyxl import load_workbook
 from helpers import Site, make_fetcher, page
 
 from pricemon import cli
@@ -134,7 +135,7 @@ def test_run_prints_the_report_path(project, capsys, monkeypatch):
 def test_report_command_rebuilds_todays_report(project, capsys, monkeypatch):
     site = Site({A: (200, page("119.00")), B: (200, page("125.00"))})
     monkeypatch.setattr(cli, "build_fetcher", lambda settings: make_fetcher(site))
-    cli.main(["run", "clients/acme-shop.yaml", "--dry-run"])
+    cli.main(["run", "clients/acme-shop.yaml"])
     for old in (project / "data" / "acme-shop" / "reports").iterdir():
         old.unlink()
     requests_before = len(site.requested)
@@ -149,7 +150,7 @@ def test_report_command_rebuilds_todays_report(project, capsys, monkeypatch):
 def test_report_command_without_a_run_on_that_date(project, capsys, monkeypatch):
     site = Site({A: (200, page("119.00")), B: (200, page("125.00"))})
     monkeypatch.setattr(cli, "build_fetcher", lambda settings: make_fetcher(site))
-    cli.main(["run", "clients/acme-shop.yaml", "--dry-run"])
+    cli.main(["run", "clients/acme-shop.yaml"])
     capsys.readouterr()
     assert cli.main(["report", "clients/acme-shop.yaml", "--date", "2000-01-01"]) == 1
     assert "No run found on 2000-01-01" in capsys.readouterr().err
@@ -158,3 +159,41 @@ def test_report_command_without_a_run_on_that_date(project, capsys, monkeypatch)
 def test_report_command_without_any_data(project, capsys):
     assert cli.main(["report", "clients/acme-shop.yaml"]) == 1
     assert "No data for client acme-shop" in capsys.readouterr().err
+
+
+def test_report_command_uses_the_real_run_not_a_later_dry_run(project, capsys, monkeypatch):
+    site = Site({A: (200, page("119.00")), B: (200, page("125.00"))})
+    monkeypatch.setattr(cli, "build_fetcher", lambda settings: make_fetcher(site))
+    assert cli.main(["run", "clients/acme-shop.yaml"]) == 0
+    site.pages[A] = (200, page("109.00"))
+    assert cli.main(["run", "clients/acme-shop.yaml", "--dry-run"]) == 0
+    reports = project / "data" / "acme-shop" / "reports"
+    names = sorted(p.name for p in reports.iterdir())
+    assert len(names) == 4
+    assert sum("dry-run" in name for name in names) == 2
+
+    capsys.readouterr()
+    assert cli.main(["report", "clients/acme-shop.yaml"]) == 0
+    assert "dry-run" not in capsys.readouterr().out
+    real_xlsx = next(p for p in reports.iterdir() if p.suffix == ".xlsx" and "dry-run" not in p.name)
+    prices = {
+        row[-1]: row[5] for row in load_workbook(real_xlsx)["Prices"].iter_rows(min_row=2, values_only=True)
+    }
+    assert prices[A] == 119
+
+    assert cli.main(["report", "clients/acme-shop.yaml", "--dry-run"]) == 0
+    assert "dry-run" in capsys.readouterr().out
+
+
+def test_report_command_without_a_dry_run_on_that_date(project, capsys, monkeypatch):
+    site = Site({A: (200, page("119.00")), B: (200, page("125.00"))})
+    monkeypatch.setattr(cli, "build_fetcher", lambda settings: make_fetcher(site))
+    cli.main(["run", "clients/acme-shop.yaml"])
+    capsys.readouterr()
+    assert cli.main(["report", "clients/acme-shop.yaml", "--dry-run"]) == 1
+    assert "No dry run found on" in capsys.readouterr().err
+
+
+def test_report_command_rejects_a_malformed_date(project, capsys):
+    assert cli.main(["report", "clients/acme-shop.yaml", "--date", "yesterday"]) == 1
+    assert "Invalid date 'yesterday': use YYYY-MM-DD" in capsys.readouterr().err

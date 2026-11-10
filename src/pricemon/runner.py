@@ -91,8 +91,11 @@ def run_client(
                 store.add_event(run_id, saved.id, event)
                 summary.events.append(event)
         store.finish_run(run_id, now().isoformat(), summary.urls_total, summary.urls_ok, summary.urls_failed)
-        report_paths = write_report(config, store, run_id, client_dir / "reports")
-        summary.report_paths = [str(path) for path in report_paths]
+        try:
+            report_paths = write_report(config, store, run_id, client_dir / "reports")
+            summary.report_paths = [str(path) for path in report_paths]
+        except Exception as exc:  # e.g. the client has the file open in Excel
+            summary.warnings.append(f"report not written: {type(exc).__name__}: {exc}")
         return summary
     finally:
         store.close()

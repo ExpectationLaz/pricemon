@@ -1,4 +1,5 @@
 import csv
+from dataclasses import replace
 from decimal import Decimal
 
 import pytest
@@ -192,3 +193,73 @@ def test_report_of_a_real_run_ignores_dry_runs(store, tmp_path):
     _, dry_prices = sheet(dry_path, "Prices")
     dry_a = next(row for row in dry_prices if row["URL"] == A)
     assert dry_a["Previous price"] == 119
+
+
+def test_dry_run_report_has_its_own_file_names(store, tmp_path):
+    real = store.start_run("2026-11-10T10:00:00+00:00")
+    store.add_observation(real, ok(A, "119.00"))
+    dry = store.start_run("2026-11-10T11:00:00+00:00", dry_run=True)
+    store.add_observation(dry, ok(A, "109.00"))
+    real_paths = write_report(CONFIG, store, real, tmp_path / "reports")
+    dry_paths = write_report(CONFIG, store, dry, tmp_path / "reports")
+    assert [p.name[10:] for p in real_paths] == [".xlsx", ".csv"]
+    assert [p.name[10:] for p in dry_paths] == ["-dry-run.xlsx", "-dry-run.csv"]
+    _, prices = sheet(real_paths[0], "Prices")
+    assert prices[0]["Price"] == 119
+    _, dry_prices = sheet(dry_paths[0], "Prices")
+    assert dry_prices[0]["Price"] == 109
+
+
+def test_text_that_looks_like_a_formula_is_stored_as_text(store, tmp_path):
+    run1 = store.start_run("2026-11-10T10:00:00+00:00")
+    formula = '=HYPERLINK("http://evil.example","x")'
+    store.add_observation(run1, replace(ok(A, "119.00"), title=formula))
+    store.add_observation(run1, replace(ok(B, "50.00"), title="-20% Drill"))
+    paths = write_report(CONFIG, store, run1, tmp_path / "reports")
+
+    title_cells = {row[12].value: row[4] for row in load_workbook(paths[0])["Prices"].iter_rows(min_row=2)}
+    assert (title_cells[A].data_type, title_cells[A].value) == ("s", formula)
+    assert (title_cells[B].data_type, title_cells[B].value) == ("s", "-20% Drill")
+
+    with paths[1].open(newline="", encoding="utf-8-sig") as handle:
+        rows = list(csv.reader(handle))
+    titles = {row[-1]: row[4] for row in rows[1:]}
+    assert titles[A] == "'" + formula
+    assert titles[B] == "'-20% Drill"
+
+
+def test_negative_numbers_in_the_csv_are_not_quoted(store, tmp_path):
+    paths = write_report(CONFIG, store, two_runs(store), tmp_path / "reports")
+    with paths[1].open(newline="", encoding="utf-8-sig") as handle:
+        rows = list(csv.reader(handle))
+    a = dict(zip(rows[0], next(row for row in rows[1:] if row[-1] == A)))
+    assert a["Change %"] == "-8.40"
+
+
+def test_control_characters_do_not_break_the_report(store, tmp_path):
+    run1 = store.start_run("2026-11-10T10:00:00+00:00")
+    store.add_observation(run1, replace(ok(A, "119.00"), title="Drill\x0b 12V\x00"))
+    store.add_observation(run1, replace(failed(B), error="HTTP 500\x07 from server"))
+    paths = write_report(CONFIG, store, run1, tmp_path / "reports")
+    _, prices = sheet(paths[0], "Prices")
+    assert next(row for row in prices if row["URL"] == A)["Title"] == "Drill 12V"
+    _, problems = sheet(paths[0], "Problems")
+    assert problems[0]["Reason"] == "HTTP 500 from server"
+
+
+def test_price_columns_use_two_decimals_and_columns_are_sized(store, tmp_path):
+    paths = write_report(CONFIG, store, two_runs(store), tmp_path / "reports")
+    workbook = load_workbook(paths[0])
+    prices = workbook["Prices"]
+    header = [cell.value for cell in prices[1]]
+    for name in ("Own price", "Price", "Previous price", "Change %"):
+        column = header.index(name)
+        assert all(row[column].number_format == "0.00" for row in prices.iter_rows(min_row=2)), name
+    changes = workbook["Changes"]
+    change_header = [cell.value for cell in changes[1]]
+    for name in ("Old price", "New price", "Change %"):
+        column = change_header.index(name)
+        assert all(row[column].number_format == "0.00" for row in changes.iter_rows(min_row=2)), name
+    url_width = prices.column_dimensions["M"].width
+    assert len(A) <= url_width <= 60
+    assert prices.column_dimensions["B"].width >= 8

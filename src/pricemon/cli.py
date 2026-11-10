@@ -129,7 +129,11 @@ def cmd_validate(args) -> int:
 
 def cmd_report(args) -> int:
     config = load_client(args.config)
-    day = date.fromisoformat(args.date) if args.date else date.today()
+    try:
+        day = date.fromisoformat(args.date) if args.date else date.today()
+    except ValueError:
+        print(f"Invalid date {args.date!r}: use YYYY-MM-DD", file=sys.stderr)
+        return 1
     client_dir = DATA_DIR / config.client
     db_path = client_dir / "pricemon.db"
     if not db_path.exists():
@@ -140,10 +144,12 @@ def cmd_report(args) -> int:
         run_ids = [
             run["id"]
             for run in store.runs()
-            if datetime.fromisoformat(run["started_at"]).astimezone().date() == day
+            if bool(run["dry_run"]) == args.dry_run
+            and datetime.fromisoformat(run["started_at"]).astimezone().date() == day
         ]
         if not run_ids:
-            print(f"No run found on {day.isoformat()}", file=sys.stderr)
+            kind = "dry run" if args.dry_run else "run"
+            print(f"No {kind} found on {day.isoformat()}", file=sys.stderr)
             return 1
         paths = write_report(config, store, run_ids[-1], client_dir / "reports")
     finally:
@@ -174,6 +180,7 @@ def build_parser() -> argparse.ArgumentParser:
     report = commands.add_parser("report", help="rebuild a day's report from stored data, without fetching")
     report.add_argument("config", type=Path)
     report.add_argument("--date", help="local date of the run, YYYY-MM-DD (default: today)")
+    report.add_argument("--dry-run", action="store_true", help="rebuild the last dry run of that date instead of the real run")
     report.set_defaults(handler=cmd_report)
 
     return parser

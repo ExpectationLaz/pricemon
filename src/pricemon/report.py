@@ -7,6 +7,8 @@ from decimal import Decimal
 from pathlib import Path
 
 from openpyxl import Workbook
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
+from openpyxl.utils import get_column_letter
 from openpyxl.styles import Font
 
 from .config import ClientConfig, hostname
@@ -28,6 +30,40 @@ _CHANGE_LABELS = {
 }
 _STOCK_LABELS = {True: "yes", False: "no", None: "unknown"}
 _TWO_PLACES = Decimal("0.01")
+_PRICES_NUMBER_COLUMNS = ("Own price", "Price", "Previous price", "Change %")
+_CHANGES_NUMBER_COLUMNS = ("Old price", "New price", "Change %")
+_FORMULA_STARTS = ("=", "+", "-", "@", chr(9), chr(13))
+
+
+def _clean(text: str) -> str:
+    """Remove characters that are illegal in an xlsx file."""
+    return ILLEGAL_CHARACTERS_RE.sub("", text)
+
+
+def _csv_value(value):
+    """A CSV cell: None is empty, text that could run as a formula gets a leading quote."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        value = _clean(value)
+        if value.startswith(_FORMULA_STARTS):
+            return "'" + value
+    return value
+
+
+def _set_cell(cell, value) -> None:
+    """Write a value; text is always stored as a string, never as a formula."""
+    if isinstance(value, str):
+        # openpyxl 3.1 has no set_explicit_value: assigning the value may mark "=..." as a
+        # formula, so force the data type back to string afterwards.
+        cell.value = _clean(value)
+        cell.data_type = "s"
+    else:
+        cell.value = value
+
+
+def _column_width(texts: list[str]) -> int:
+    return min(60, max(8, max((len(text) for text in texts), default=0) + 2))
 
 
 @dataclass
@@ -99,32 +135,41 @@ def build_report(config: ClientConfig, store: Store, run_id: int) -> ReportData:
 def write_report(config: ClientConfig, store: Store, run_id: int, out_dir: Path) -> list[Path]:
     """Write the report for a run. Returns the xlsx path first, then the csv path if written."""
     data = build_report(config, store, run_id)
-    day = datetime.fromisoformat(store.run(run_id)["started_at"]).astimezone().date().isoformat()
+    run = store.run(run_id)
+    day = datetime.fromisoformat(run["started_at"]).astimezone().date().isoformat()
+    stem = f"{day}-dry-run" if run["dry_run"] else day
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     workbook = Workbook()
-    sheets = (("Prices", PRICES_HEADER, data.prices), ("Changes", CHANGES_HEADER, data.changes),
-              ("Problems", PROBLEMS_HEADER, data.problems))
-    for index, (title, header, rows) in enumerate(sheets):
+    sheets = (("Prices", PRICES_HEADER, data.prices, _PRICES_NUMBER_COLUMNS),
+              ("Changes", CHANGES_HEADER, data.changes, _CHANGES_NUMBER_COLUMNS),
+              ("Problems", PROBLEMS_HEADER, data.problems, ()))
+    for index, (title, header, rows, number_columns) in enumerate(sheets):
         worksheet = workbook.active if index == 0 else workbook.create_sheet()
         worksheet.title = title
-        worksheet.append(header)
-        for cell in worksheet[1]:
-            cell.font = Font(bold=True)
+        for column, name in enumerate(header, start=1):
+            worksheet.cell(row=1, column=column, value=name).font = Font(bold=True)
         worksheet.freeze_panes = "A2"
-        for row in rows:
-            worksheet.append(row)
-    xlsx_path = out_dir / f"{day}.xlsx"
+        for row_number, row in enumerate(rows, start=2):
+            for column, value in enumerate(row, start=1):
+                cell = worksheet.cell(row=row_number, column=column)
+                _set_cell(cell, value)
+                if header[column - 1] in number_columns:
+                    cell.number_format = "0.00"
+        for column, name in enumerate(header, start=1):
+            texts = [name] + ["" if row[column - 1] is None else _clean(str(row[column - 1])) for row in rows]
+            worksheet.column_dimensions[get_column_letter(column)].width = _column_width(texts)
+    xlsx_path = out_dir / f"{stem}.xlsx"
     workbook.save(str(xlsx_path))
     paths = [xlsx_path]
 
     if "csv" in config.report.formats:
-        csv_path = out_dir / f"{day}.csv"
+        csv_path = out_dir / f"{stem}.csv"
         # utf-8-sig so Excel opens the file with the right encoding.
         with csv_path.open("w", newline="", encoding="utf-8-sig") as handle:
             writer = csv.writer(handle)
             writer.writerow(PRICES_HEADER)
-            writer.writerows(["" if value is None else value for value in row] for row in data.prices)
+            writer.writerows([_csv_value(value) for value in row] for row in data.prices)
         paths.append(csv_path)
     return paths
