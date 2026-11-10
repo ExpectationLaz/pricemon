@@ -1,9 +1,7 @@
 """Step 2: Open Graph style product meta tags."""
 
-from selectolax.lexbor import LexborHTMLParser as HTMLParser
-
 from ..models import Partial
-from .common import normalize_currency, parse_availability
+from .common import HTMLParser, normalize_currency, parse_availability
 from .price import PriceError, parse_structured_price
 
 

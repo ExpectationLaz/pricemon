@@ -41,6 +41,11 @@ def _normalise(cleaned: str, decimal_separator: str | None) -> str:
     return cleaned
 
 
+def count_numbers(text: str | None) -> int:
+    """How many separate numbers the text contains."""
+    return len(_NUMBER.findall(text or ""))
+
+
 def parse_price(text: str | None, decimal_separator: str | None = None) -> Decimal:
     """Parse human-formatted price text such as '1.299,00 €' or '$1,299.00'.
 

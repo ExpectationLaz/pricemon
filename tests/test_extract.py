@@ -128,3 +128,63 @@ def test_unparsable_rules_price_raises():
     html = '<html><body><span class="price">Call us</span></body></html>'
     with pytest.raises(ExtractError, match="jsonld, meta, rules"):
         extract(html, URL, RULES)
+
+
+def test_rule_text_nodes_are_joined_with_spaces_and_whitespace_is_collapsed():
+    html = (
+        '<html><body><h1 class="product-title">Cordless\n   saw <em>Pro</em></h1>'
+        '<span class="price">\n  1&nbsp;299,00\n  <small>€</small></span>'
+        '<div class="availability">Not  in\n stock</div></body></html>'
+    )
+    rules = RULES.model_copy(
+        update={"stock": StockRule(css=".availability", in_stock_text=["in stock"], out_of_stock_text=["not  in stock"])}
+    )
+    ex = extract(html, URL, rules)
+    assert ex.title == "Cordless saw Pro"
+    assert ex.price == Decimal("1299.00")
+    assert ex.in_stock is False
+
+
+@pytest.mark.parametrize(
+    "markup",
+    [
+        '<span class="price">12<sup>99</sup></span>',
+        '<span class="price"><del>20,00</del> 15,00</span>',
+        '<span class="price">From 12,50 to 15,00</span>',
+    ],
+)
+def test_ambiguous_rule_price_text_is_refused(markup):
+    with pytest.raises(ExtractError, match="more than one number"):
+        extract(f"<html><body>{markup}</body></html>", URL, RULES)
+
+
+def test_ambiguous_rule_price_can_be_resolved_with_an_attribute():
+    html = '<html><body><span class="price" data-amount="12.99">12<sup>99</sup></span></body></html>'
+    rules = RULES.model_copy(update={"price": Selector(css="span.price", attr="data-amount")})
+    assert extract(html, URL, rules).price == Decimal("12.99")
+
+
+def test_unparsable_rule_price_is_explained():
+    html = '<html><body><span class="price">Call us</span></body></html>'
+    with pytest.raises(ExtractError) as error:
+        extract(html, URL, RULES)
+    assert str(error.value) == "no price found (tried: jsonld, meta, rules): rules: cannot parse price text 'Call us'"
+
+
+def test_error_message_without_notes_is_unchanged():
+    with pytest.raises(ExtractError) as error:
+        extract(load("no_price.html"), URL, None)
+    assert str(error.value) == "no price found (tried: jsonld, meta)"
+
+
+def test_title_from_a_priceless_earlier_step_is_kept():
+    html = (
+        '<html><head><script type="application/ld+json">'
+        '{"@type": "Product", "name": "Garden hose"}</script>'
+        '<meta property="product:price:amount" content="50.00">'
+        '<meta property="product:price:currency" content="EUR">'
+        "</head><body></body></html>"
+    )
+    ex = extract(html, URL, None)
+    assert (ex.price, ex.method, ex.title) == (Decimal("50.00"), "meta", "Garden hose")
+    assert ex.sources == {"price": "meta", "currency": "meta", "title": "jsonld"}

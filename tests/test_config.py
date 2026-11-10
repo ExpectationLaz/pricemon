@@ -147,3 +147,19 @@ def test_site_rules_loaded_and_matched_by_hostname(tmp_path):
 
 def test_site_rules_missing_folder_is_empty(tmp_path):
     assert load_site_rules(tmp_path / "nope") == {}
+
+
+def test_invalid_css_selector_in_site_rules_is_a_config_error(tmp_path):
+    sites = tmp_path / "sites"
+    sites.mkdir()
+    write(sites, "b.yaml", "domain: b.example\nprice: {css: 'h1['}\n")
+    with pytest.raises(ConfigError, match="invalid CSS selector"):
+        load_site_rules(sites)
+
+
+def test_invalid_stock_selector_in_site_rules_is_a_config_error(tmp_path):
+    sites = tmp_path / "sites"
+    sites.mkdir()
+    write(sites, "b.yaml", "domain: b.example\nstock: {css: 'div[', in_stock_text: [In stock]}\n")
+    with pytest.raises(ConfigError, match="invalid CSS selector"):
+        load_site_rules(sites)

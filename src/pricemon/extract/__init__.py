@@ -1,9 +1,8 @@
 """The extraction chain: JSON-LD, then meta tags, then site rules."""
 
-from selectolax.lexbor import LexborHTMLParser as HTMLParser
-
 from ..config import SiteRules
 from ..models import Extraction, Partial
+from .common import HTMLParser
 from .jsonld import extract_jsonld
 from .meta import extract_meta
 from .rules import extract_rules
@@ -19,7 +18,7 @@ def extract(html: str, url: str, rules: SiteRules | None) -> Extraction:
     """Extract title, price, currency and stock from a product page.
 
     The first step that yields a price wins. Fields it is missing are filled
-    from the steps after it. `url` is accepted for error context and future use.
+    from the other steps, in chain order. `url` is accepted for error context and future use.
     """
     tree = HTMLParser(html)
     steps: list[tuple[str, Partial]] = []
@@ -32,13 +31,17 @@ def extract(html: str, url: str, rules: SiteRules | None) -> Extraction:
     winner_index = next((i for i, (_, partial) in enumerate(steps) if partial.price is not None), None)
     if winner_index is None:
         tried = ", ".join(name for name, _ in steps) or "nothing"
-        raise ExtractError(f"no price found (tried: {tried})")
+        message = f"no price found (tried: {tried})"
+        notes = [f"{name}: {partial.note}" for name, partial in steps if partial.note]
+        if notes:
+            message += ": " + "; ".join(notes)
+        raise ExtractError(message)
 
     method, winner = steps[winner_index]
     values = {name: getattr(winner, name) for name in _FILLABLE}
     sources = {"price": method}
     sources.update({name: method for name, value in values.items() if value is not None})
-    for later_method, later in steps[winner_index + 1 :]:
+    for later_method, later in steps[:winner_index] + steps[winner_index + 1 :]:
         for name in _FILLABLE:
             if values[name] is None and getattr(later, name) is not None:
                 values[name] = getattr(later, name)

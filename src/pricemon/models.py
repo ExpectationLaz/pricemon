@@ -28,6 +28,7 @@ class Partial:
     price: Decimal | None = None
     currency: str | None = None
     in_stock: bool | None = None
+    note: str | None = None  # why a step that matched still gave no price
 
 
 @dataclass(frozen=True)

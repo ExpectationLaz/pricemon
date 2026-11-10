@@ -2,6 +2,8 @@
 
 import re
 
+from selectolax.lexbor import LexborHTMLParser as HTMLParser  # noqa: F401  (the one parser import)
+
 _IN_STOCK = {"instock", "limitedavailability", "onlineonly", "instoreonly"}
 _OUT_OF_STOCK = {"outofstock", "soldout", "discontinued", "oos"}
 

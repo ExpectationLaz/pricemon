@@ -7,6 +7,7 @@ from urllib.parse import urlsplit
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from selectolax.lexbor import LexborHTMLParser
 
 EventType = Literal["price_down", "price_up", "out_of_stock", "back_in_stock"]
 
@@ -69,15 +70,27 @@ class ClientConfig(_Strict):
         return self
 
 
+def _check_css(css: str) -> str:
+    try:
+        LexborHTMLParser("").css(css)
+    except Exception:
+        raise ValueError(f"invalid CSS selector: {css}") from None
+    return css
+
+
 class Selector(_Strict):
     css: str
     attr: str | None = None
+
+    _valid_css = field_validator("css")(_check_css)
 
 
 class StockRule(_Strict):
     css: str
     in_stock_text: list[str] = []
     out_of_stock_text: list[str] = []
+
+    _valid_css = field_validator("css")(_check_css)
 
 
 class SiteRules(_Strict):

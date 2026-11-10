@@ -2,7 +2,7 @@ from decimal import Decimal
 
 import pytest
 
-from pricemon.extract.price import PriceError, parse_price, parse_structured_price
+from pricemon.extract.price import PriceError, count_numbers, parse_price, parse_structured_price
 
 
 @pytest.mark.parametrize(
@@ -90,3 +90,11 @@ def test_parse_structured_price(value, expected):
 def test_parse_structured_price_rejects(value):
     with pytest.raises(PriceError):
         parse_structured_price(value)
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [("1 299,00 €", 1), ("$1,299.00", 1), ("20,00 15,00", 2), ("12 99", 2), ("From 12,50 to 15,00", 2), ("Call us", 0), ("", 0), (None, 0)],
+)
+def test_count_numbers(text, expected):
+    assert count_numbers(text) == expected
