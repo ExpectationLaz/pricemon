@@ -3,10 +3,14 @@
 The API URL contains the bot token, so errors raised here never include the URL.
 """
 
+import logging
 from pathlib import Path
 from typing import Mapping
 
 import httpx
+
+# httpx logs every request URL at INFO level, and the Bot API URL holds the bot token.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 _API = "https://api.telegram.org"
 _MAX_TEXT = 4000  # Telegram's limit is 4096 characters

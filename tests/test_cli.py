@@ -122,7 +122,7 @@ def test_fatal_error_exits_1(project, capsys, monkeypatch):
 
     monkeypatch.setattr(cli, "build_fetcher", broken)
     assert cli.main(["run", "clients/acme-shop.yaml"]) == 1
-    assert "Fatal error: boom" in capsys.readouterr().err
+    assert "Fatal error: RuntimeError: boom" in capsys.readouterr().err
 
 
 def test_run_prints_the_report_path(project, capsys, monkeypatch):

@@ -263,5 +263,5 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Config error: {exc}", file=sys.stderr)
         return 1
     except Exception as exc:
-        print(f"Fatal error: {exc}", file=sys.stderr)
+        print(f"Fatal error: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
