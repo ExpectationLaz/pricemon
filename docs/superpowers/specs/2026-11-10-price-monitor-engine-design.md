@@ -296,7 +296,19 @@ gives a list of events. It does no I/O.
 
 Writes `data/<client>/reports/<YYYY-MM-DD>.xlsx` and, if configured, a CSV of
 the Prices sheet with the same base name. The date is the local date of the
-run. A second run on the same day overwrites that day's files.
+run. A second run on the same day overwrites that day's files. A dry run's
+files are named `<YYYY-MM-DD>-dry-run`, so a dry run never overwrites a real
+run's report.
+
+Titles and error texts come from competitor pages, so every text cell is
+written as plain text: characters that are illegal in a workbook are removed,
+a text cell is never stored as a formula, and in the CSV a text value starting
+with `=`, `+`, `-` or `@` is prefixed with a single quote. Price columns use
+two decimals.
+
+If the report cannot be written (for example the file is open in Excel), the
+run still completes and the problem is recorded as a warning in the run
+summary.
 
 - **Prices** sheet, one row per URL: product, SKU, own price, competitor
   domain, title, price, currency, in stock, previous price, change %, last
@@ -330,7 +342,7 @@ One digest per run per channel, never one message per event.
 ```
 pricemon run <client.yaml> [--dry-run]
 pricemon check-url <url> [--browser]
-pricemon report <client.yaml> [--date YYYY-MM-DD]
+pricemon report <client.yaml> [--date YYYY-MM-DD] [--dry-run]
 pricemon validate <client.yaml>
 ```
 
@@ -346,6 +358,8 @@ pricemon validate <client.yaml>
   the tool for quoting a job: it shows in a minute whether a prospect's URLs
   work out of the box, need a site rules file, or are unsupported.
 - `report`: rebuild the report for a date from stored data, with no fetching.
+  It uses the last real run of that date; `--dry-run` selects the last dry run
+  instead.
 - `validate`: load and validate a client config and the site rules it needs,
   and report which domains have no rules file.
 
