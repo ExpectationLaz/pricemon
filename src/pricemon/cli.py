@@ -1,9 +1,12 @@
 """Command line interface: run, check-url, report, validate."""
 
 import argparse
+import os
 import sys
 from datetime import date, datetime
 from pathlib import Path
+
+from dotenv import load_dotenv
 
 from .config import (
     ConfigError,
@@ -18,6 +21,7 @@ from .config import (
 from .extract import ExtractError, extract
 from .fetch import Fetcher
 from .models import BLOCKED, DISALLOWED, FETCH_ERROR, NOT_FOUND, OK, RunSummary
+from .notify import Notifier
 from .report import write_report
 from .runner import run_client
 from .store import Store
@@ -26,6 +30,7 @@ from .store import Store
 SITES_DIR = Path("sites")
 DATA_DIR = Path("data")
 SETTINGS_PATH = Path("settings.yaml")
+ENV_PATH = Path(".env")
 
 _FETCH_VERDICTS = {
     BLOCKED: "unsupported: the site blocks automated requests",
@@ -38,6 +43,10 @@ _STOCK_LABELS = {True: "yes", False: "no", None: "unknown"}
 
 def build_fetcher(settings: Settings) -> Fetcher:
     return Fetcher(settings)
+
+
+def build_notifier(settings: Settings) -> Notifier:
+    return Notifier(os.environ, settings)
 
 
 def _line(label: str, value) -> str:
@@ -65,6 +74,7 @@ def cmd_run(args) -> int:
         site_rules=load_site_rules(SITES_DIR),
         data_dir=DATA_DIR,
         fetcher=build_fetcher(settings),
+        notifier=build_notifier(settings),
         dry_run=args.dry_run,
     )
     print_summary(summary)
@@ -188,6 +198,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    load_dotenv(ENV_PATH)
     try:
         return args.handler(args)
     except ConfigError as exc:

@@ -154,3 +154,55 @@ def test_report_failure_is_a_warning_not_a_failed_run(tmp_path, monkeypatch):
     assert (summary.urls_ok, summary.urls_failed) == (3, 0)
     assert summary.report_paths == []
     assert summary.warnings == ["report not written: PermissionError: file is open in Excel"]
+
+
+class RecordingNotifier:
+    def __init__(self, warnings=(), error=None):
+        self.calls = []
+        self.warnings = list(warnings)
+        self.error = error
+
+    def send(self, config, store, run_id, events, report_path):
+        if self.error:
+            raise self.error
+        self.calls.append((config.client, run_id, list(events), str(report_path)))
+        return self.warnings
+
+
+def test_notifier_gets_the_events_and_the_xlsx_report(tmp_path):
+    site = healthy_site()
+    notifier = RecordingNotifier(warnings=["email skipped: SMTP settings missing in .env"])
+    run(site, tmp_path, notifier=notifier)
+    site.pages[A] = (200, page("109.00"))
+    summary = run(site, tmp_path, notifier=notifier)
+    assert len(notifier.calls) == 2
+    client, run_id, events, report_path = notifier.calls[1]
+    assert (client, run_id) == ("acme", 2)
+    assert [e.type for e in events] == ["price_down"]
+    assert report_path.endswith(".xlsx") and report_path == summary.report_paths[0]
+    assert summary.warnings == ["email skipped: SMTP settings missing in .env"]
+
+
+def test_dry_run_does_not_notify(tmp_path):
+    notifier = RecordingNotifier()
+    run(healthy_site(), tmp_path, notifier=notifier, dry_run=True)
+    assert notifier.calls == []
+
+
+def test_notifier_crash_is_a_warning_not_a_failed_run(tmp_path):
+    notifier = RecordingNotifier(error=RuntimeError("digest exploded"))
+    summary = run(healthy_site(), tmp_path, notifier=notifier)
+    assert summary.urls_ok == 3
+    assert summary.warnings == ["notification failed: RuntimeError: digest exploded"]
+    assert len(summary.report_paths) == 2
+
+
+def test_notifier_still_runs_when_the_report_could_not_be_written(tmp_path, monkeypatch):
+    def broken(*args, **kwargs):
+        raise PermissionError("file is open in Excel")
+
+    monkeypatch.setattr("pricemon.runner.write_report", broken)
+    notifier = RecordingNotifier()
+    summary = run(healthy_site(), tmp_path, notifier=notifier)
+    assert [call[3] for call in notifier.calls] == ["None"]
+    assert summary.warnings == ["report not written: PermissionError: file is open in Excel"]

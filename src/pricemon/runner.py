@@ -68,6 +68,7 @@ def run_client(
     site_rules: dict[str, SiteRules],
     data_dir: Path,
     fetcher: Fetcher,
+    notifier=None,
     dry_run: bool = False,
     now=utc_now,
 ) -> RunSummary:
@@ -96,6 +97,12 @@ def run_client(
             summary.report_paths = [str(path) for path in report_paths]
         except Exception as exc:  # e.g. the client has the file open in Excel
             summary.warnings.append(f"report not written: {type(exc).__name__}: {exc}")
+        if notifier is not None and not dry_run:
+            report_path = Path(summary.report_paths[0]) if summary.report_paths else None
+            try:
+                summary.warnings.extend(notifier.send(config, store, run_id, summary.events, report_path))
+            except Exception as exc:  # a notification problem must not fail the run
+                summary.warnings.append(f"notification failed: {type(exc).__name__}: {exc}")
         return summary
     finally:
         store.close()

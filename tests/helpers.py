@@ -42,3 +42,29 @@ def make_fetcher(site):
     settings = Settings(respect_robots_txt=False, min_interval_seconds=0, retries=0)
     client = httpx.Client(transport=httpx.MockTransport(site.handler))
     return Fetcher(settings, client=client, sleep=lambda seconds: None)
+
+
+ENV = {
+    "SMTP_HOST": "smtp.example.com",
+    "SMTP_PORT": "587",
+    "SMTP_USER": "monitor",
+    "SMTP_PASSWORD": "secret",
+    "SMTP_FROM": "monitor@example.com",
+    "TELEGRAM_BOT_TOKEN": "TOKEN",
+    "OPERATOR_EMAIL": "op@example.com",
+    "OPERATOR_TELEGRAM_CHAT_ID": "999",
+}
+
+
+class Outbox:
+    """Fake senders that record what would have been sent."""
+
+    def __init__(self):
+        self.emails = []  # (to, subject, body, attachment)
+        self.telegrams = []  # (chat_id, text, attachment)
+
+    def email(self, env, to, subject, body, attachment=None):
+        self.emails.append((to, subject, body, attachment))
+
+    def telegram(self, env, chat_id, text, attachment=None):
+        self.telegrams.append((chat_id, text, attachment))

@@ -197,3 +197,33 @@ def test_report_command_without_a_dry_run_on_that_date(project, capsys, monkeypa
 def test_report_command_rejects_a_malformed_date(project, capsys):
     assert cli.main(["report", "clients/acme-shop.yaml", "--date", "yesterday"]) == 1
     assert "Invalid date 'yesterday': use YYYY-MM-DD" in capsys.readouterr().err
+
+
+def test_run_notifies_unless_dry_run(project, capsys, monkeypatch):
+    site = Site({A: (200, page("119.00")), B: (200, page("125.00"))})
+    calls = []
+
+    class FakeNotifier:
+        def send(self, config, store, run_id, events, report_path):
+            calls.append(run_id)
+            return ["telegram skipped: TELEGRAM_BOT_TOKEN missing in .env"]
+
+    monkeypatch.setattr(cli, "build_fetcher", lambda settings: make_fetcher(site))
+    monkeypatch.setattr(cli, "build_notifier", lambda settings: FakeNotifier())
+    assert cli.main(["run", "clients/acme-shop.yaml", "--dry-run"]) == 0
+    assert calls == []
+    capsys.readouterr()
+    assert cli.main(["run", "clients/acme-shop.yaml"]) == 0
+    assert calls == [2]
+    assert "Warning: telegram skipped: TELEGRAM_BOT_TOKEN missing in .env" in capsys.readouterr().out
+
+
+def test_dotenv_file_is_loaded(project, monkeypatch):
+    import os
+
+    (project / ".env").write_text("PRICEMON_TEST_MARKER=loaded\n", encoding="utf-8")
+    try:
+        assert cli.main(["validate", "clients/acme-shop.yaml"]) == 0
+        assert os.environ.get("PRICEMON_TEST_MARKER") == "loaded"
+    finally:
+        os.environ.pop("PRICEMON_TEST_MARKER", None)
