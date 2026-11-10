@@ -332,8 +332,12 @@ One digest per run per channel, never one message per event.
 - Operator digest: sent to `OPERATOR_EMAIL` and `OPERATOR_TELEGRAM_CHAT_ID`
   when any URL reaches `operator_failure_threshold` consecutive failed runs, or
   when a run has events marked `verify`. It lists each URL with its status and
-  error. A URL triggers the operator digest once when it crosses the threshold
-  and not again until it has recovered and failed again.
+  error. A URL triggers the operator digest when its failure streak reaches
+  the threshold and again every `operator_failure_threshold` runs while it
+  keeps failing (with the default 3: after 3, 6, 9 failed runs), so a single
+  lost alert is not the last word.
+- The Telegram API URL contains the bot token, so no warning, error message or
+  log line ever includes that URL.
 - A sending failure is logged and recorded in the run summary. It does not
   fail the run, and the report file is still written.
 
