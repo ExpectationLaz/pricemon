@@ -188,7 +188,10 @@ Input: a URL and the site rules for its domain. Output: a `FetchResult` with
 - Network errors and 5xx responses are retried `retries` times with a doubling
   delay starting at 2 seconds. 4xx responses are not retried.
 - `robots.txt` is fetched once per domain per run. A disallowed URL gets status
-  `disallowed` and is not fetched.
+  `disallowed` and is not fetched. A missing file (a 4xx other than 429) means
+  no rules. If the file cannot be read (network error or 5xx) the rules are
+  unknown, so that domain's URLs get `fetch_error` for this run and are not
+  fetched; a 429 on `robots.txt` gives them `blocked`.
 - Block detection: HTTP 403 or 429, or a response body that is a known
   challenge page (CAPTCHA or "checking your browser" markers), gives status
   `blocked`. The engine never retries around a block, solves a challenge, or
