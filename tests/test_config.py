@@ -163,3 +163,20 @@ def test_invalid_stock_selector_in_site_rules_is_a_config_error(tmp_path):
     write(sites, "b.yaml", "domain: b.example\nstock: {css: 'div[', in_stock_text: [In stock]}\n")
     with pytest.raises(ConfigError, match="invalid CSS selector"):
         load_site_rules(sites)
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["retries: -1", "min_interval_seconds: -5", "timeout_seconds: 0", "operator_failure_threshold: 0"],
+)
+def test_settings_reject_out_of_range_values(tmp_path, line):
+    with pytest.raises(ConfigError):
+        load_settings(write(tmp_path, "settings.yaml", line + "\n"))
+
+
+def test_site_rules_reject_a_negative_interval(tmp_path):
+    sites = tmp_path / "sites"
+    sites.mkdir()
+    write(sites, "b.yaml", "domain: b.example\nmin_interval_seconds: -1\n")
+    with pytest.raises(ConfigError, match="min_interval_seconds"):
+        load_site_rules(sites)

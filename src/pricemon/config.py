@@ -96,7 +96,7 @@ class StockRule(_Strict):
 class SiteRules(_Strict):
     domain: str
     fetcher: Literal["http", "browser"] = "http"
-    min_interval_seconds: float | None = None
+    min_interval_seconds: float | None = Field(default=None, ge=0)
     skip_structured_data: bool = False
     title: Selector | None = None
     price: Selector | None = None
@@ -107,11 +107,11 @@ class SiteRules(_Strict):
 
 class Settings(_Strict):
     user_agent: str = "pricemon/0.1"
-    min_interval_seconds: float = 5
-    timeout_seconds: float = 20
-    retries: int = 2
+    min_interval_seconds: float = Field(default=5, ge=0)
+    timeout_seconds: float = Field(default=20, gt=0)
+    retries: int = Field(default=2, ge=0)
     respect_robots_txt: bool = True
-    operator_failure_threshold: int = 3
+    operator_failure_threshold: int = Field(default=3, ge=1)
 
 
 def _strip_www(host: str) -> str:

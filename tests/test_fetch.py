@@ -182,3 +182,63 @@ def test_robots_is_ignored_when_disabled():
     fetcher, _ = make(handler, respect_robots_txt=False)
     assert fetcher.fetch("https://a.example/p/1").status == OK
     assert calls == ["/p/1"]
+
+
+@pytest.mark.parametrize("status", [500, 503])
+def test_unreadable_robots_file_stops_the_host_for_this_run(status):
+    handler, calls = robots_site(status, "")
+    fetcher, _ = make(handler, respect_robots_txt=True, min_interval_seconds=0)
+    first = fetcher.fetch("https://a.example/p/1")
+    second = fetcher.fetch("https://a.example/p/2")
+    assert (first.status, first.http_status, first.error) == (
+        FETCH_ERROR, status, f"robots.txt unavailable: HTTP {status}",
+    )
+    assert second == first
+    assert calls == ["/robots.txt"]
+
+
+def test_robots_network_error_stops_the_host_for_this_run():
+    calls = []
+
+    def handler(request):
+        calls.append(request.url.path)
+        if request.url.path == "/robots.txt":
+            raise httpx.ConnectError("boom", request=request)
+        return httpx.Response(200, text=PAGE)
+
+    fetcher, _ = make(handler, respect_robots_txt=True, min_interval_seconds=0)
+    result = fetcher.fetch("https://a.example/p/1")
+    assert (result.status, result.http_status, result.error) == (
+        FETCH_ERROR, None, "robots.txt unavailable: ConnectError",
+    )
+    assert fetcher.fetch("https://a.example/p/2") == result
+    assert calls == ["/robots.txt"]
+
+
+def test_robots_429_marks_the_host_blocked():
+    handler, calls = robots_site(429, "")
+    fetcher, _ = make(handler, respect_robots_txt=True, min_interval_seconds=0)
+    result = fetcher.fetch("https://a.example/p/1")
+    assert (result.status, result.http_status, result.error) == (BLOCKED, 429, "robots.txt: HTTP 429")
+    assert fetcher.fetch("https://a.example/p/2") == result
+    assert calls == ["/robots.txt"]
+
+
+def test_robots_403_means_no_rules():
+    handler, calls = robots_site(403, "")
+    fetcher, _ = make(handler, respect_robots_txt=True, min_interval_seconds=0)
+    assert fetcher.fetch("https://a.example/p/1").status == OK
+    assert calls == ["/robots.txt", "/p/1"]
+
+
+def test_a_failing_robots_file_on_one_host_does_not_affect_another():
+    def handler(request):
+        if request.url.host == "a.example" and request.url.path == "/robots.txt":
+            return httpx.Response(500, text="")
+        if request.url.path == "/robots.txt":
+            return httpx.Response(404, text="")
+        return httpx.Response(200, text=PAGE)
+
+    fetcher, _ = make(handler, respect_robots_txt=True, min_interval_seconds=0)
+    assert fetcher.fetch("https://a.example/p/1").status == FETCH_ERROR
+    assert fetcher.fetch("https://b.example/p/1").status == OK

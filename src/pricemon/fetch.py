@@ -67,15 +67,17 @@ class Fetcher:
         self._clock = clock
         self._sleep = sleep
         self._last_request: dict[str, float] = {}
-        self._robots: dict[str, RobotFileParser | None] = {}
+        self._robots: dict[str, RobotFileParser | FetchResult | None] = {}
 
     def fetch(self, url: str, rules: SiteRules | None = None) -> FetchResult:
         host = hostname(url)
         interval = self.settings.min_interval_seconds
         if rules is not None and rules.min_interval_seconds is not None:
             interval = rules.min_interval_seconds
-        if self.settings.respect_robots_txt and not self._allowed(url, host, interval):
-            return FetchResult(DISALLOWED, error="disallowed by robots.txt")
+        if self.settings.respect_robots_txt:
+            refusal = self._robots_refusal(url, host, interval)
+            if refusal is not None:
+                return refusal
         return self._fetch_http(url, host, interval)
 
     def _wait(self, host: str, interval: float) -> None:
@@ -87,21 +89,37 @@ class Fetcher:
                 self._sleep(remaining)
         self._last_request[host] = self._clock()
 
-    def _allowed(self, url: str, host: str, interval: float) -> bool:
+    def _robots_refusal(self, url: str, host: str, interval: float) -> FetchResult | None:
+        """A result that stops this fetch because of robots.txt, or None when the URL may be fetched."""
         if host not in self._robots:
             self._robots[host] = self._load_robots(url, host, interval)
-        parser = self._robots[host]
-        return True if parser is None else parser.can_fetch(self.settings.user_agent, url)
+        rules = self._robots[host]
+        if isinstance(rules, FetchResult):
+            return rules
+        if rules is not None and not rules.can_fetch(self.settings.user_agent, url):
+            return FetchResult(DISALLOWED, error="disallowed by robots.txt")
+        return None
 
-    def _load_robots(self, url: str, host: str, interval: float) -> RobotFileParser | None:
-        """The parsed robots.txt for a host, or None when there is none to obey."""
+    def _load_robots(self, url: str, host: str, interval: float) -> RobotFileParser | FetchResult | None:
+        """robots.txt for a host, fetched once per run.
+
+        Returns a parser when the file exists, None when the site has no rules
+        (a 4xx other than 429), or a FetchResult when the file could not be
+        read. In that last case the rules are unknown, so the host is left
+        alone for the rest of the run instead of being treated as open.
+        """
         parts = urlsplit(url)
         self._wait(host, interval)
         try:
             response = self.client.get(f"{parts.scheme}://{parts.netloc}/robots.txt")
-        except httpx.HTTPError:
-            return None
-        if response.status_code != 200:
+        except httpx.HTTPError as exc:
+            return FetchResult(FETCH_ERROR, error=f"robots.txt unavailable: {type(exc).__name__}")
+        status = response.status_code
+        if status == 429:
+            return FetchResult(BLOCKED, status, error="robots.txt: HTTP 429")
+        if status >= 500:
+            return FetchResult(FETCH_ERROR, status, error=f"robots.txt unavailable: HTTP {status}")
+        if status != 200:
             return None
         parser = RobotFileParser()
         parser.parse(response.text.splitlines())
