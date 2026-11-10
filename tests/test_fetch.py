@@ -242,3 +242,84 @@ def test_a_failing_robots_file_on_one_host_does_not_affect_another():
     fetcher, _ = make(handler, respect_robots_txt=True, min_interval_seconds=0)
     assert fetcher.fetch("https://a.example/p/1").status == FETCH_ERROR
     assert fetcher.fetch("https://b.example/p/1").status == OK
+
+
+import sys
+import types
+
+BROWSER_RULES = SiteRules(domain="a.example", fetcher="browser")
+
+
+def install_fake_playwright(monkeypatch, status=200, html=PAGE, launch_error=None):
+    """Put a stand-in for playwright.sync_api into sys.modules. Returns the list of visited URLs."""
+    visited = []
+
+    class FakePage:
+        def goto(self, url, timeout=None, wait_until=None):
+            visited.append((url, timeout, wait_until))
+            return types.SimpleNamespace(status=status)
+
+        def content(self):
+            return html
+
+    class FakeBrowser:
+        def new_page(self, user_agent=None):
+            return FakePage()
+
+        def close(self):
+            visited.append("closed")
+
+    class FakeChromium:
+        def launch(self):
+            if launch_error:
+                raise launch_error
+            return FakeBrowser()
+
+    class FakeManager:
+        def __enter__(self):
+            return types.SimpleNamespace(chromium=FakeChromium())
+
+        def __exit__(self, *exc):
+            return False
+
+    module = types.ModuleType("playwright.sync_api")
+    module.sync_playwright = lambda: FakeManager()
+    monkeypatch.setitem(sys.modules, "playwright", types.ModuleType("playwright"))
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", module)
+    return visited
+
+
+def no_http(request):
+    raise AssertionError("the browser fetcher must not use the HTTP client")
+
+
+def test_browser_fetcher_returns_rendered_html(monkeypatch):
+    visited = install_fake_playwright(monkeypatch)
+    fetcher, _ = make(no_http, timeout_seconds=20)
+    result = fetcher.fetch("https://a.example/p/1", BROWSER_RULES)
+    assert (result.status, result.http_status, result.html) == (OK, 200, PAGE)
+    assert visited == [("https://a.example/p/1", 20000, "networkidle"), "closed"]
+
+
+def test_browser_fetcher_reports_a_blocked_page(monkeypatch):
+    install_fake_playwright(monkeypatch, status=403, html="")
+    fetcher, _ = make(no_http)
+    result = fetcher.fetch("https://a.example/p/1", BROWSER_RULES)
+    assert (result.status, result.error) == (BLOCKED, "HTTP 403")
+
+
+def test_browser_failure_is_a_fetch_error(monkeypatch):
+    install_fake_playwright(monkeypatch, launch_error=RuntimeError("chromium is not installed"))
+    fetcher, _ = make(no_http)
+    result = fetcher.fetch("https://a.example/p/1", BROWSER_RULES)
+    assert result.status == FETCH_ERROR
+    assert result.error == "browser: RuntimeError: chromium is not installed"
+
+
+def test_browser_fetcher_without_playwright_explains_how_to_install(monkeypatch):
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", None)  # makes the import fail
+    fetcher, _ = make(no_http)
+    result = fetcher.fetch("https://a.example/p/1", BROWSER_RULES)
+    assert result.status == FETCH_ERROR
+    assert 'pip install "pricemon[browser]"' in result.error
+    assert "playwright install chromium" in result.error

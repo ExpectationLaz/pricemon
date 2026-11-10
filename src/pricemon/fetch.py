@@ -78,6 +78,9 @@ class Fetcher:
             refusal = self._robots_refusal(url, host, interval)
             if refusal is not None:
                 return refusal
+        if rules is not None and rules.fetcher == "browser":
+            self._wait(host, interval)
+            return self._fetch_browser(url)
         return self._fetch_http(url, host, interval)
 
     def _wait(self, host: str, interval: float) -> None:
@@ -147,3 +150,32 @@ class Fetcher:
                 self._sleep(delay)
                 delay *= 2
         return FetchResult(FETCH_ERROR, http_status, error=error)
+
+    def _fetch_browser(self, url: str) -> FetchResult:
+        """Load the page in headless Chromium and return the rendered HTML. No retries."""
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError:
+            return FetchResult(
+                FETCH_ERROR,
+                error='the browser fetcher needs Playwright: run pip install "pricemon[browser]" '
+                "and then playwright install chromium",
+            )
+        try:
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch()
+                try:
+                    page = browser.new_page(user_agent=self.settings.user_agent)
+                    response = page.goto(
+                        url, timeout=self.settings.timeout_seconds * 1000, wait_until="networkidle"
+                    )
+                    html = page.content()
+                    status = response.status if response is not None else 200
+                finally:
+                    browser.close()
+        except Exception as exc:
+            return FetchResult(FETCH_ERROR, error=f"browser: {type(exc).__name__}: {exc}")
+        result = classify(status, html)
+        if result is None:  # a 5xx response; the browser path does not retry
+            return FetchResult(FETCH_ERROR, status, error=f"HTTP {status}")
+        return result
