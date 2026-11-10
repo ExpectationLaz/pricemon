@@ -458,3 +458,64 @@ def test_test_flags_a_refused_recipient():
     notifier = Notifier(ENV, Settings(), send_email=refusing, send_telegram=Outbox().telegram)
     first = notifier.test(config(email=["a@x.example", "b@x.example"]))[0]
     assert first == ("client email (a@x.example, b@x.example)", False, "email refused for: b@x.example")
+
+
+# pages that could not be checked
+
+
+def test_client_digest_says_how_many_pages_could_not_be_checked():
+    text = client_digest(config(), [price_event()], earlier=1, unchecked=(2, 5))
+    assert text.splitlines() == [
+        "acme-shop: 1 change today", "", DOWN, "",
+        "Includes 1 change(s) that could not be delivered earlier.", "",
+        "2 of 5 pages could not be checked today.",
+    ]
+    quiet = config(send_when_no_changes=True)
+    assert client_digest(quiet, [], unchecked=(1, 3)).splitlines() == [
+        "acme-shop: no changes today", "", "1 of 3 pages could not be checked today.",
+    ]
+    assert client_digest(quiet, []) == "acme-shop: no changes today"
+    assert client_digest(config(), [], unchecked=(1, 3)) is None  # the rule for sending is unchanged
+
+
+def test_the_client_hears_when_every_page_failed_on_a_no_changes_day(store, tmp_path):
+    run_id = failing_run(store, 1)
+    store.add_observation(
+        run_id,
+        Observation(
+            url="https://www.competitor-b.example/p/1", product_name="Drill", fetched_at="2026-11-01T07:00:06+00:00",
+            status=FETCH_ERROR, error="HTTP 500",
+        ),
+    )
+    outbox = Outbox()
+    cfg = config(email=["owner@acme.example"], send_when_no_changes=True)
+    make_notifier(ENV, outbox).send(cfg, store, run_id, [], tmp_path / "r.xlsx")
+    client_mail = outbox.emails[0]
+    assert client_mail[0] == ["owner@acme.example"]
+    assert client_mail[2].splitlines() == [
+        "acme-shop: no changes today", "", "2 of 2 pages could not be checked today.",
+    ]
+
+
+def test_a_digest_with_changes_also_reports_unchecked_pages(store, tmp_path):
+    run_id = new_run(store, 2)
+    record(store, run_id, price_event())
+    store.add_observation(
+        run_id,
+        Observation(
+            url="https://www.competitor-b.example/p/1", product_name="Drill", fetched_at="2026-11-02T07:00:06+00:00",
+            status="verify", error="held",
+        ),
+    )
+    outbox = Outbox()
+    make_notifier(ENV, outbox).send(config(email=["owner@acme.example"]), store, run_id, [price_event()], None)
+    assert outbox.emails[0][2].splitlines() == [
+        "acme-shop: 1 change today", "", DOWN, "", "1 of 2 pages could not be checked today.",
+    ]
+
+
+def test_nothing_is_sent_when_pages_failed_but_nothing_changed(store, tmp_path):
+    run_id = failing_run(store, 1)
+    outbox = Outbox()
+    make_notifier(ENV, outbox).send(config(email=["owner@acme.example"]), store, run_id, [], None)
+    assert outbox.emails == []

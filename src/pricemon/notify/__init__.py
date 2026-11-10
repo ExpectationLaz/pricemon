@@ -29,19 +29,27 @@ def event_line(event: Event) -> str:
     )
 
 
-def client_digest(config: ClientConfig, events: list[Event], earlier: int = 0, unchecked=None) -> str | None:
+def client_digest(
+    config: ClientConfig, events: list[Event], earlier: int = 0, unchecked: tuple[int, int] | None = None
+) -> str | None:
     """The message for the client, or None when nothing should be sent.
 
     `earlier` is how many of the listed events could not be delivered in an earlier run.
+    `unchecked` is (pages not checked, pages total) for this run, or None when every page was checked.
     """
     alerted = [event for event in events if event.alerted]
     if not alerted:
-        return f"{config.client}: no changes today" if config.notify.send_when_no_changes else None
-    noun = "change" if len(alerted) == 1 else "changes"
-    lines = [f"{config.client}: {len(alerted)} {noun} today", ""]
-    lines.extend(event_line(event) for event in alerted)
-    if earlier > 0:
-        lines.extend(["", f"Includes {earlier} change(s) that could not be delivered earlier."])
+        if not config.notify.send_when_no_changes:
+            return None
+        lines = [f"{config.client}: no changes today"]
+    else:
+        noun = "change" if len(alerted) == 1 else "changes"
+        lines = [f"{config.client}: {len(alerted)} {noun} today", ""]
+        lines.extend(event_line(event) for event in alerted)
+        if earlier > 0:
+            lines.extend(["", f"Includes {earlier} change(s) that could not be delivered earlier."])
+    if unchecked is not None and unchecked[0] > 0:
+        lines.extend(["", f"{unchecked[0]} of {unchecked[1]} pages could not be checked today."])
     return "\n".join(lines)
 
 
@@ -98,7 +106,9 @@ class Notifier:
 
         pending = store.undelivered_events(run_id)
         earlier = sum(1 for event in pending if event.run_id != run_id)
-        body = client_digest(config, pending, earlier)
+        observations = store.run_observations(run_id)
+        failed = sum(1 for obs in observations if obs.status != OK)
+        body = client_digest(config, pending, earlier, (failed, len(observations)) if failed else None)
         if body is not None:
             subject = f"Price monitor: {config.client}"
             channel_warnings: list[str] = []

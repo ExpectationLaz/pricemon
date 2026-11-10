@@ -50,7 +50,10 @@ def test_two_runs_end_to_end(tmp_path):
     # The client hears about the price drop, with the report attached.
     client_email, operator_email = outbox.emails
     assert client_email[0] == ["owner@acme.example"]
-    assert client_email[2] == "acme: 1 change today\n\nDrill at a.example: 119.00 to 109.00 EUR, down 8.4%"
+    assert client_email[2] == (
+        "acme: 1 change today\n\nDrill at a.example: 119.00 to 109.00 EUR, down 8.4%"
+        "\n\n1 of 2 pages could not be checked today."  # B is blocked
+    )
     assert Path(client_email[3]).suffix == ".xlsx" and Path(client_email[3]).exists()
 
     # The operator hears about the blocked page, without the report.
