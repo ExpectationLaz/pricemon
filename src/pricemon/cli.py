@@ -131,6 +131,7 @@ def cmd_check_url(args) -> int:
     rules = rules_for(args.url, load_site_rules(SITES_DIR))
     print(_line("URL", args.url))
     print(_line("Site rules", "found" if rules else "none"))
+    already_browser = rules is not None and rules.fetcher == "browser"
     if args.browser:
         rules = (rules or SiteRules(domain=host)).model_copy(update={"fetcher": "browser"})
     result = build_fetcher(settings).fetch(args.url, rules)
@@ -163,7 +164,11 @@ def cmd_check_url(args) -> int:
         shown = "-" if value is None else value
         print(_line(label, f"{shown}  [{source}]" if source else shown))
     note = "" if found.in_stock is not None else " (stock unknown: add a stock rule if the client wants stock alerts)"
-    print(_line("Verdict", f"works{note}"))
+    if args.browser and not already_browser:
+        verdict = f'works with the browser fetcher: create sites/{host}.yaml with "fetcher: browser"'
+    else:
+        verdict = "works"
+    print(_line("Verdict", f"{verdict}{note}"))
     return 0
 
 

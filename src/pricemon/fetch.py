@@ -206,15 +206,26 @@ class Fetcher:
                 browser = playwright.chromium.launch()
                 try:
                     page = browser.new_page(user_agent=self.settings.user_agent)
-                    response = page.goto(
-                        url, timeout=self.settings.timeout_seconds * 1000, wait_until="networkidle"
-                    )
+                    response = page.goto(url, timeout=self.settings.timeout_seconds * 1000, wait_until="load")
+                    # The navigation response is the page as the server sent it. A challenge page
+                    # can turn into normal-looking content, so classify this body too.
+                    first_body = ""
+                    try:
+                        first_body = response.text() if response is not None else ""
+                    except Exception:  # the body may not be readable; that is not a challenge
+                        pass
+                    try:
+                        page.wait_for_load_state("networkidle", timeout=5000)  # best effort
+                    except Exception:
+                        pass
                     html = page.content()
                     status = response.status if response is not None else 200
                 finally:
                     browser.close()
         except Exception as exc:
             return FetchResult(FETCH_ERROR, error=f"browser: {type(exc).__name__}: {exc}")
+        if looks_like_challenge(first_body):
+            return FetchResult(BLOCKED, status, error="challenge page")
         result = classify(status, html)
         if result is None:  # a 5xx response; the browser path does not retry
             return FetchResult(FETCH_ERROR, status, error=f"HTTP {status}")

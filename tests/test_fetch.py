@@ -373,14 +373,34 @@ import types
 BROWSER_RULES = SiteRules(domain="a.example", fetcher="browser")
 
 
-def install_fake_playwright(monkeypatch, status=200, html=PAGE, launch_error=None):
-    """Put a stand-in for playwright.sync_api into sys.modules. Returns the list of visited URLs."""
+def install_fake_playwright(
+    monkeypatch, status=200, html=PAGE, launch_error=None, first_body=None, load_state_error=None, body_error=None
+):
+    """Put a stand-in for playwright.sync_api into sys.modules. Returns the list of what the fake saw.
+
+    `first_body` is the navigation response body (defaults to `html`, the final DOM).
+    """
     visited = []
+    first_body = html if first_body is None else first_body
+
+    class FakeResponse:
+        def __init__(self):
+            self.status = status
+
+        def text(self):
+            if body_error:
+                raise body_error
+            return first_body
 
     class FakePage:
         def goto(self, url, timeout=None, wait_until=None):
             visited.append((url, timeout, wait_until))
-            return types.SimpleNamespace(status=status)
+            return FakeResponse()
+
+        def wait_for_load_state(self, state=None, timeout=None):
+            visited.append(("wait", state, timeout))
+            if load_state_error:
+                raise load_state_error
 
         def content(self):
             return html
@@ -421,7 +441,7 @@ def test_browser_fetcher_returns_rendered_html(monkeypatch):
     fetcher, _ = make(no_http, timeout_seconds=20)
     result = fetcher.fetch("https://a.example/p/1", BROWSER_RULES)
     assert (result.status, result.http_status, result.html) == (OK, 200, PAGE)
-    assert visited == [("https://a.example/p/1", 20000, "networkidle"), "closed"]
+    assert visited == [("https://a.example/p/1", 20000, "load"), ("wait", "networkidle", 5000), "closed"]
 
 
 def test_browser_fetcher_reports_a_blocked_page(monkeypatch):
@@ -446,3 +466,39 @@ def test_browser_fetcher_without_playwright_explains_how_to_install(monkeypatch)
     assert result.status == FETCH_ERROR
     assert 'pip install "pricemon[browser]"' in result.error
     assert "playwright install chromium" in result.error
+
+
+def test_a_challenge_in_the_first_response_is_blocked_even_if_the_final_page_looks_normal(monkeypatch):
+    install_fake_playwright(monkeypatch, html=PAGE, first_body=CHALLENGE)
+    fetcher, _ = make(no_http)
+    result = fetcher.fetch("https://a.example/p/1", BROWSER_RULES)
+    assert (result.status, result.error, result.html) == (BLOCKED, "challenge page", None)
+
+
+def test_a_challenge_in_the_final_page_is_still_blocked(monkeypatch):
+    install_fake_playwright(monkeypatch, html=CHALLENGE, first_body=PAGE)
+    fetcher, _ = make(no_http)
+    assert fetcher.fetch("https://a.example/p/1", BROWSER_RULES).status == BLOCKED
+
+
+def test_a_page_that_never_goes_idle_does_not_fail_the_fetch(monkeypatch):
+    install_fake_playwright(monkeypatch, load_state_error=TimeoutError("networkidle"))
+    fetcher, _ = make(no_http)
+    result = fetcher.fetch("https://a.example/p/1", BROWSER_RULES)
+    assert (result.status, result.html) == (OK, PAGE)
+
+
+def test_an_unreadable_first_response_is_not_treated_as_a_challenge(monkeypatch):
+    install_fake_playwright(monkeypatch, body_error=RuntimeError("body not available"))
+    fetcher, _ = make(no_http)
+    result = fetcher.fetch("https://a.example/p/1", BROWSER_RULES)
+    assert (result.status, result.html) == (OK, PAGE)
+
+
+def test_robots_txt_is_checked_before_the_browser_is_launched(monkeypatch):
+    visited = install_fake_playwright(monkeypatch)
+    handler, calls = robots_site(200, "User-agent: *\nDisallow: /private/\n")
+    fetcher, _ = make(handler, respect_robots_txt=True, min_interval_seconds=0)
+    result = fetcher.fetch("https://a.example/private/x", BROWSER_RULES)
+    assert (result.status, result.error) == (DISALLOWED, "disallowed by robots.txt")
+    assert visited == [] and calls == ["/robots.txt"]

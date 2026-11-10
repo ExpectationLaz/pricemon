@@ -379,3 +379,37 @@ def test_accept_without_any_data_returns_1(project, capsys):
     assert cli.main(["accept", "clients/acme-shop.yaml", A]) == 1
     assert "Nothing to accept" in capsys.readouterr().err
     assert not (project / "data").exists()  # and does not create an empty database
+
+
+# check-url with the browser fetcher
+
+BROWSER_VERDICT = 'Verdict:    works with the browser fetcher: create sites/a.example.yaml with "fetcher: browser"'
+
+
+def test_check_url_browser_that_works_tells_the_operator_to_create_a_rules_file(project, capsys, monkeypatch):
+    use_stub(monkeypatch, FetchResult(OK, 200, page("119.00")))
+    assert cli.main(["check-url", A, "--browser"]) == 0
+    assert BROWSER_VERDICT in capsys.readouterr().out
+
+
+def test_check_url_browser_with_rules_that_use_http_still_asks_for_the_browser_setting(project, capsys, monkeypatch):
+    (project / "sites").mkdir()
+    (project / "sites" / "a.yaml").write_text("domain: a.example\nfetcher: http\n", encoding="utf-8")
+    use_stub(monkeypatch, FetchResult(OK, 200, page("119.00")))
+    assert cli.main(["check-url", A, "--browser"]) == 0
+    assert BROWSER_VERDICT in capsys.readouterr().out
+
+
+def test_check_url_browser_is_plain_works_when_the_rules_already_use_the_browser(project, capsys, monkeypatch):
+    (project / "sites").mkdir()
+    (project / "sites" / "a.yaml").write_text("domain: a.example\nfetcher: browser\n", encoding="utf-8")
+    use_stub(monkeypatch, FetchResult(OK, 200, page("119.00")))
+    assert cli.main(["check-url", A, "--browser"]) == 0
+    out = capsys.readouterr().out
+    assert "Verdict:    works\n" in out and "browser fetcher" not in out
+
+
+def test_check_url_without_the_browser_flag_still_says_works(project, capsys, monkeypatch):
+    use_stub(monkeypatch, FetchResult(OK, 200, page("119.00")))
+    assert cli.main(["check-url", A]) == 0
+    assert "Verdict:    works\n" in capsys.readouterr().out
