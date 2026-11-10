@@ -10,7 +10,7 @@ from ..config import ClientConfig, Settings, hostname
 from ..models import OK, VERIFY, Event
 from ..store import Store
 from .email import send_email
-from .telegram import send_telegram
+from .telegram import TelegramAttachmentError, send_telegram
 
 _SMTP_KEYS = ("SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD", "SMTP_FROM")
 _STOCK_TEXT = {"out_of_stock": "out of stock", "back_in_stock": "back in stock"}
@@ -194,6 +194,10 @@ class Notifier:
             return False
         try:
             self._send_telegram(self.env, chat_id, text, attachment)
+        except TelegramAttachmentError as exc:
+            # The text arrived; only the report is missing.
+            warnings.append(f"telegram report not attached: {str(exc).replace(token, '***')}")
+            return True
         except Exception as exc:
             # The API URL contains the bot token: never let it reach a warning or a log.
             detail = str(exc).replace(token, "***")

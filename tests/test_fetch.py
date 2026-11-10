@@ -374,7 +374,8 @@ BROWSER_RULES = SiteRules(domain="a.example", fetcher="browser")
 
 
 def install_fake_playwright(
-    monkeypatch, status=200, html=PAGE, launch_error=None, first_body=None, load_state_error=None, body_error=None
+    monkeypatch, status=200, html=PAGE, launch_error=None, first_body=None, load_state_error=None, body_error=None,
+    final_url=None,
 ):
     """Put a stand-in for playwright.sync_api into sys.modules. Returns the list of what the fake saw.
 
@@ -393,8 +394,11 @@ def install_fake_playwright(
             return first_body
 
     class FakePage:
+        url = None
+
         def goto(self, url, timeout=None, wait_until=None):
             visited.append((url, timeout, wait_until))
+            self.url = final_url or url
             return FakeResponse()
 
         def wait_for_load_state(self, state=None, timeout=None):
@@ -502,3 +506,17 @@ def test_robots_txt_is_checked_before_the_browser_is_launched(monkeypatch):
     result = fetcher.fetch("https://a.example/private/x", BROWSER_RULES)
     assert (result.status, result.error) == (DISALLOWED, "disallowed by robots.txt")
     assert visited == [] and calls == ["/robots.txt"]
+
+
+def test_a_browser_redirect_to_another_site_is_an_error_and_the_page_is_not_returned(monkeypatch):
+    install_fake_playwright(monkeypatch, final_url="https://other.example/landing")
+    fetcher, _ = make(no_http)
+    result = fetcher.fetch("https://a.example/p/1", BROWSER_RULES)
+    assert (result.status, result.error, result.html) == (FETCH_ERROR, "redirected to another site: other.example", None)
+
+
+def test_a_browser_redirect_within_the_same_site_is_fine(monkeypatch):
+    install_fake_playwright(monkeypatch, final_url="https://www.a.example/p/2")
+    fetcher, _ = make(no_http)
+    result = fetcher.fetch("https://a.example/p/1", BROWSER_RULES)
+    assert (result.status, result.html) == (OK, PAGE)

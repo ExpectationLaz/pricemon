@@ -193,7 +193,9 @@ The alert lists one line per problem. Each line starts with a keyword.
 - `VERIFY <product>`: the price moved by `verify_threshold_pct` or more. Open the
   page in a browser. If the new price is real, run
   `pricemon accept <client.yaml> <url>`; the client is told in the next run's
-  digest. If the price shown is wrong, the site changed its layout: fix
+  digest. If `accept` answers `Nothing to accept`, the page's most recent run
+  did not hold a price (for example the page failed to load in that run): run
+  `check-url` on the page and wait for the next run that holds it. If the price shown is wrong, the site changed its layout: fix
   `sites/<domain>.yaml` and confirm with `check-url`. Until one of those happens
   the page is held at its last trusted price and the alert repeats.
 - `DELIVERY <problem>`: the client's email or Telegram could not be reached. Run
@@ -210,4 +212,6 @@ The log of every run is in `data\<client>-run.log`.
 - Bot protection is never bypassed. A blocked site is reported as unsupported.
 - A redirect to another site is not followed: the page is reported as failed
   ("redirected to another site"). Redirects within the same site are followed.
+  A page that the browser fetcher is redirected away from to another site is
+  reported as a failure, the same as with the normal fetcher.
 - Check a site's terms of use before taking a job that targets it.

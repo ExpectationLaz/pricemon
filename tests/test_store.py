@@ -217,9 +217,14 @@ def test_a_database_from_before_delivery_tracking_is_upgraded(tmp_path):
     old.close()
     upgraded = Store(path)
     try:
-        assert [e.type for e in upgraded.undelivered_events(1)] == ["price_down"]
-        upgraded.mark_delivered(1)
+        # Upgrading must not resend the client's whole alert history.
         assert upgraded.undelivered_events(1) == []
+        run_id = upgraded.start_run("2026-11-11T07:00:00+00:00")
+        obs = upgraded.add_observation(run_id, ok(A, "99"))
+        upgraded.add_event(run_id, obs.id, alerted_event())
+        assert [e.type for e in upgraded.undelivered_events(run_id)] == ["price_down"]
+        upgraded.mark_delivered(run_id)
+        assert upgraded.undelivered_events(run_id) == []
     finally:
         upgraded.close()
     Store(path).close()  # opening an upgraded database again does not fail

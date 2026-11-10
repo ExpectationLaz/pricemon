@@ -3,7 +3,7 @@ import pytest
 
 from helpers import ENV
 
-from pricemon.notify.telegram import TelegramError, send_telegram
+from pricemon.notify.telegram import TelegramAttachmentError, TelegramError, send_telegram
 
 
 def client_for(handler):
@@ -74,3 +74,32 @@ def test_long_text_is_truncated():
     send_telegram(ENV, "123", "z" * 5000, client=client_for(handler))
     assert seen[0].count(b"z") == 4000
     assert b"truncated" in seen[0]
+
+
+def test_a_failed_document_upload_after_the_text_was_sent_is_an_attachment_error(tmp_path):
+    report = tmp_path / "r.xlsx"
+    report.write_bytes(b"x")
+
+    def handler(request):
+        return httpx.Response(400 if request.url.path.endswith("sendDocument") else 200, json={"ok": True})
+
+    with pytest.raises(TelegramAttachmentError) as error:
+        send_telegram(ENV, "123", "hello", report, client=client_for(handler))
+    assert str(error.value) == "sendDocument returned HTTP 400"
+    assert "TOKEN" not in str(error.value)
+
+
+def test_a_failed_text_is_a_plain_telegram_error_and_nothing_else_is_sent(tmp_path):
+    report = tmp_path / "r.xlsx"
+    report.write_bytes(b"x")
+    seen = []
+
+    def handler(request):
+        seen.append(request.url.path)
+        return httpx.Response(400, json={"ok": False})
+
+    with pytest.raises(TelegramError) as error:
+        send_telegram(ENV, "123", "hello", report, client=client_for(handler))
+    assert not isinstance(error.value, TelegramAttachmentError)
+    assert str(error.value) == "sendMessage returned HTTP 400"
+    assert seen == ["/botTOKEN/sendMessage"]

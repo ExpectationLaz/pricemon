@@ -112,6 +112,8 @@ class Store:
         if "delivered" not in columns:
             with self.db:
                 self.db.execute("ALTER TABLE events ADD COLUMN delivered INTEGER NOT NULL DEFAULT 0")
+                # Alerts from before the upgrade were already handled; do not resend the history.
+                self.db.execute("UPDATE events SET delivered = 1")
 
     def close(self) -> None:
         self.db.close()

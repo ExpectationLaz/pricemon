@@ -20,6 +20,10 @@ class TelegramError(Exception):
     """A Bot API call failed. The message is safe to log."""
 
 
+class TelegramAttachmentError(TelegramError):
+    """The text was sent but the report could not be attached."""
+
+
 def _post(client: httpx.Client, base: str, method: str, **kwargs) -> None:
     try:
         response = client.post(f"{base}/{method}", **kwargs)
@@ -46,8 +50,11 @@ def send_telegram(
         _post(client, base, "sendMessage", data={"chat_id": chat_id, "text": text})
         if attachment is not None:
             attachment = Path(attachment)
-            with attachment.open("rb") as handle:
-                _post(client, base, "sendDocument", data={"chat_id": chat_id}, files={"document": (attachment.name, handle)})
+            try:
+                with attachment.open("rb") as handle:
+                    _post(client, base, "sendDocument", data={"chat_id": chat_id}, files={"document": (attachment.name, handle)})
+            except TelegramError as exc:
+                raise TelegramAttachmentError(str(exc)) from None
     finally:
         if owns_client:
             client.close()

@@ -6,6 +6,7 @@ from helpers import ENV, Outbox
 
 from pricemon.config import ClientConfig, Settings
 from pricemon.models import FETCH_ERROR, OK, Event, Observation
+from pricemon.notify.telegram import TelegramAttachmentError
 from pricemon.notify import Notifier, client_digest, event_line, operator_digest
 from pricemon.store import Store
 
@@ -519,3 +520,21 @@ def test_nothing_is_sent_when_pages_failed_but_nothing_changed(store, tmp_path):
     outbox = Outbox()
     make_notifier(ENV, outbox).send(config(email=["owner@acme.example"]), store, run_id, [], None)
     assert outbox.emails == []
+
+
+def test_a_telegram_text_that_arrived_without_its_report_counts_as_delivered(store, tmp_path):
+    run_id = new_run(store, 2)
+    record(store, run_id, price_event())
+    outbox = Outbox()
+
+    def no_attachment(env, chat_id, text, attachment=None):
+        if chat_id == "123":
+            raise TelegramAttachmentError("sendDocument returned HTTP 400")
+        outbox.telegram(env, chat_id, text, attachment)
+
+    notifier = Notifier(ENV, Settings(), send_email=outbox.email, send_telegram=no_attachment)
+    warnings = notifier.send(config(telegram_chat_id="123"), store, run_id, [price_event()], tmp_path / "r.xlsx")
+    assert warnings == ["telegram report not attached: sendDocument returned HTTP 400"]
+    assert store.undelivered_events(run_id) == []
+    (operator_email,) = outbox.emails
+    assert "DELIVERY telegram report not attached: sendDocument returned HTTP 400" in operator_email[2]

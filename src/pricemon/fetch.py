@@ -218,12 +218,17 @@ class Fetcher:
                         page.wait_for_load_state("networkidle", timeout=5000)  # best effort
                     except Exception:
                         pass
+                    final_url = page.url
                     html = page.content()
                     status = response.status if response is not None else 200
                 finally:
                     browser.close()
         except Exception as exc:
             return FetchResult(FETCH_ERROR, error=f"browser: {type(exc).__name__}: {exc}")
+        if hostname(final_url) != hostname(url):
+            return FetchResult(
+                FETCH_ERROR, status, error=f"redirected to another site: {hostname(final_url) or final_url}"
+            )
         if looks_like_challenge(first_body):
             return FetchResult(BLOCKED, status, error="challenge page")
         result = classify(status, html)
