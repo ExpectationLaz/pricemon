@@ -45,6 +45,21 @@ def test_parse_price_does_not_merge_or_misread_numbers(text, expected):
     assert parse_price(text) == Decimal(expected)
 
 
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("49\n120 reviews", "49"),
+        ("49\t120", "49"),
+        ("49\r\n120", "49"),
+        ("1 299,50", "1299.50"),
+        ("1 299", "1299"),
+        ("1 299 000", "1299000"),
+    ],
+)
+def test_only_real_spaces_act_as_thousands_separators(text, expected):
+    assert parse_price(text) == Decimal(expected)
+
+
 def test_decimal_separator_override():
     assert parse_price("1.299", decimal_separator=".") == Decimal("1.299")
     assert parse_price("1,299", decimal_separator=",") == Decimal("1.299")

@@ -3,9 +3,14 @@
 import re
 from decimal import Decimal, InvalidOperation
 
-# The first number in the text. Whitespace joins digits only as a thousands
+# Characters that may act as a thousands separator between digit groups:
+# space, no-break space, narrow no-break space, thin space. Not newline or tab.
+_THOUSANDS_SPACE = r"[    ]"
+# The first number in the text. A space joins digits only as a thousands
 # separator in the integer part ("1 299,50"), never between two separate numbers.
-_NUMBER = re.compile(r"\d{1,3}(?:\s\d{3})+(?!\d)(?:[.,]\d+)?|\d+(?:[.,]\d+)*")
+_NUMBER = re.compile(
+    r"\d{1,3}(?:" + _THOUSANDS_SPACE + r"\d{3})+(?!\d)(?:[.,]\d+)?|\d+(?:[.,]\d+)*"
+)
 _PLAIN = re.compile(r"\d+(\.\d+)?")
 
 
@@ -47,7 +52,7 @@ def parse_price(text: str | None, decimal_separator: str | None = None) -> Decim
         raise PriceError(f"no number in {text!r}")
     if match.start() > 0 and text[match.start() - 1] in "-−":
         raise PriceError(f"negative price in {text!r}")
-    cleaned = re.sub(r"\s", "", match.group())
+    cleaned = re.sub(_THOUSANDS_SPACE, "", match.group())
     try:
         value = Decimal(_normalise(cleaned, decimal_separator))
     except InvalidOperation:
