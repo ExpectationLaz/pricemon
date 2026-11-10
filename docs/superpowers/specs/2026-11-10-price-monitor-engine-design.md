@@ -337,7 +337,10 @@ pricemon validate <client.yaml>
 - `run`: load config, start a run, fetch and extract every URL, store
   observations, detect and store events, write the report, send digests, print
   a summary. `--dry-run` does all of that except sending digests, and marks the
-  run as a dry run.
+  run as a dry run. A real run ignores everything stored by dry runs: they are
+  never its baseline for change detection and never count towards a failure
+  streak. A dry run sees real and dry data, so it previews what a real run
+  would report.
 - `check-url`: fetch and extract one URL without touching any database, then
   print each field, which chain step produced it, and the fetch status. This is
   the tool for quoting a job: it shows in a minute whether a prospect's URLs
