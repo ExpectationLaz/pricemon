@@ -1,7 +1,9 @@
 """Email through SMTP."""
 
 import smtplib
+import ssl
 from email.message import EmailMessage
+from email.utils import formatdate, make_msgid
 from pathlib import Path
 from typing import Mapping
 
@@ -13,6 +15,8 @@ def build_message(sender: str, to: list[str], subject: str, body: str, attachmen
     message["From"] = sender
     message["To"] = ", ".join(to)
     message["Subject"] = subject
+    message["Date"] = formatdate(localtime=True)
+    message["Message-ID"] = make_msgid()
     message.set_content(body)
     if attachment is not None:
         attachment = Path(attachment)
@@ -32,11 +36,11 @@ def send_email(
     message = build_message(env["SMTP_FROM"], to, subject, body, attachment)
     port = int(env.get("SMTP_PORT") or 587)
     if port == 465:
-        with smtplib.SMTP_SSL(env["SMTP_HOST"], port, timeout=30) as smtp:
+        with smtplib.SMTP_SSL(env["SMTP_HOST"], port, timeout=30, context=ssl.create_default_context()) as smtp:
             smtp.login(env["SMTP_USER"], env["SMTP_PASSWORD"])
             return smtp.send_message(message)
     else:
         with smtplib.SMTP(env["SMTP_HOST"], port, timeout=30) as smtp:
-            smtp.starttls()
+            smtp.starttls(context=ssl.create_default_context())
             smtp.login(env["SMTP_USER"], env["SMTP_PASSWORD"])
             return smtp.send_message(message)
