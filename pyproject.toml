@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pricemon"
+version = "0.1.0"
+description = "Daily competitor price and stock monitoring"
+requires-python = ">=3.13"
+dependencies = [
+    "httpx>=0.27",
+    "selectolax>=0.3.21",
+    "PyYAML>=6.0",
+    "pydantic>=2.6",
+    "openpyxl>=3.1",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+browser = ["playwright>=1.44"]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+pricemon = "pricemon.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

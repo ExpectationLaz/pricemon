@@ -1,0 +1,18 @@
+client: example-shop
+products:
+  - name: "Bosch GSR 12V drill"
+    sku: "BOS-123"
+    own_price: 129.00
+    urls:
+      - https://competitor-a.example/p/123
+      - https://competitor-b.example/drill
+alerts:
+  events: [price_down, price_up, out_of_stock, back_in_stock]
+  min_price_change_pct: 1.0
+  verify_threshold_pct: 70
+notify:
+  email: [owner@example-shop.example]
+  telegram_chat_id: "123456"
+  send_when_no_changes: false
+report:
+  formats: [xlsx, csv]

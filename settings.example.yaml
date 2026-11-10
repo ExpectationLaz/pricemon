@@ -1,0 +1,6 @@
+user_agent: "pricemon/0.1"
+min_interval_seconds: 5
+timeout_seconds: 20
+retries: 2
+respect_robots_txt: true
+operator_failure_threshold: 3
