@@ -161,6 +161,9 @@ respect_robots_txt: true
 operator_failure_threshold: 3  # consecutive failed runs before the operator is alerted
 ```
 
+The values above are the defaults. `settings.yaml` is optional; a missing file
+or a missing key uses the default.
+
 ### 4.4 Secrets: `.env`
 
 `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`,
