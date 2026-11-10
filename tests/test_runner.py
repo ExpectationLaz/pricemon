@@ -206,3 +206,49 @@ def test_notifier_still_runs_when_the_report_could_not_be_written(tmp_path, monk
     summary = run(healthy_site(), tmp_path, notifier=notifier)
     assert [call[3] for call in notifier.calls] == ["None"]
     assert summary.warnings == ["report not written: PermissionError: file is open in Excel"]
+
+
+# undelivered alerts
+
+
+class MarkingNotifier(RecordingNotifier):
+    """Delivers everything, like a notifier whose channels all work."""
+
+    def send(self, config, store, run_id, events, report_path):
+        result = super().send(config, store, run_id, events, report_path)
+        store.mark_delivered(run_id)
+        return result
+
+
+def test_summary_counts_alerts_the_notifier_could_not_deliver(tmp_path):
+    site = healthy_site()
+    notifier = RecordingNotifier()  # never marks anything as delivered
+    run(site, tmp_path, notifier=notifier)
+    site.pages[A] = (200, page("109.00"))
+    site.pages[B] = (200, page("100.00"))
+    summary = run(site, tmp_path, notifier=notifier)
+    assert summary.undelivered == 2
+
+
+def test_summary_has_no_undelivered_alerts_when_the_notifier_delivered(tmp_path):
+    site = healthy_site()
+    notifier = MarkingNotifier()
+    run(site, tmp_path, notifier=notifier)
+    site.pages[A] = (200, page("109.00"))
+    assert run(site, tmp_path, notifier=notifier).undelivered == 0
+
+
+def test_undelivered_is_counted_even_when_the_notifier_crashes(tmp_path):
+    site = healthy_site()
+    run(site, tmp_path)
+    site.pages[A] = (200, page("109.00"))
+    summary = run(site, tmp_path, notifier=RecordingNotifier(error=RuntimeError("digest exploded")))
+    assert summary.undelivered == 1
+
+
+def test_undelivered_stays_zero_for_dry_runs_and_without_a_notifier(tmp_path):
+    site = healthy_site()
+    run(site, tmp_path)
+    site.pages[A] = (200, page("109.00"))
+    assert run(site, tmp_path, dry_run=True, notifier=RecordingNotifier()).undelivered == 0
+    assert run(site, tmp_path).undelivered == 0

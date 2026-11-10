@@ -76,3 +76,53 @@ def test_two_runs_end_to_end(tmp_path):
     prices = {row[-1]: row for row in workbook["Prices"].iter_rows(min_row=2, values_only=True)}
     assert prices[A][5] == 109 and prices[A][8] == 119
     assert prices[B][5] == 125 and prices[B][11] == "blocked"
+
+
+def test_a_digest_that_could_not_be_sent_is_resent_once(tmp_path):
+    """Run 2 drops in price while the mail server is down; run 3 resends; run 4 sends nothing."""
+    site = Site({A: (200, page("119.00")), B: (200, page("125.00"))})
+    outbox = Outbox()
+    mail_up = {"value": False}
+
+    def email(env, to, subject, body, attachment=None):
+        if not mail_up["value"] and to == ["owner@acme.example"]:
+            raise OSError("connection refused")
+        outbox.email(env, to, subject, body, attachment)
+
+    config = ClientConfig.model_validate(
+        {
+            "client": "acme",
+            "products": [{"name": "Drill", "urls": [A, B]}],
+            "notify": {"email": ["owner@acme.example"]},
+        }
+    )
+    notifier = Notifier(ENV, Settings(), send_email=email, send_telegram=outbox.telegram)
+
+    def run():
+        return run_client(
+            config, site_rules={}, data_dir=tmp_path / "data", fetcher=make_fetcher(site), notifier=notifier
+        )
+
+    run()
+    site.pages[A] = (200, page("109.00"))
+    second = run()
+    assert second.undelivered == 1
+    assert [e[0] for e in outbox.emails] == [["op@example.com"]]  # only the operator heard, via DELIVERY
+    assert "DELIVERY email failed: OSError: connection refused" in outbox.emails[0][2]
+
+    mail_up["value"] = True
+    third = run()  # nothing new changed
+    assert third.undelivered == 0
+    client_email = outbox.emails[1]
+    assert client_email[0] == ["owner@acme.example"]
+    assert client_email[2].splitlines() == [
+        "acme: 1 change today",
+        "",
+        "Drill at a.example: 119.00 to 109.00 EUR, down 8.4%",
+        "",
+        "Includes 1 change(s) that could not be delivered earlier.",
+    ]
+
+    fourth = run()
+    assert fourth.undelivered == 0
+    assert len(outbox.emails) == 2

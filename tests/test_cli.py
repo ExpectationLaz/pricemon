@@ -227,3 +227,102 @@ def test_dotenv_file_is_loaded(project, monkeypatch):
         assert os.environ.get("PRICEMON_TEST_MARKER") == "loaded"
     finally:
         os.environ.pop("PRICEMON_TEST_MARKER", None)
+
+
+# undelivered alerts and test-notify
+
+
+def setup_drop(project, monkeypatch):
+    """Two real runs where A drops in price; returns the fake site."""
+    site = Site({A: (200, page("119.00")), B: (200, page("125.00"))})
+    monkeypatch.setattr(cli, "build_fetcher", lambda settings: make_fetcher(site))
+    return site
+
+
+class UndeliveringNotifier:
+    def send(self, config, store, run_id, events, report_path):
+        return ["email failed: OSError: connection refused"]
+
+
+def test_run_exits_2_and_says_so_when_an_alert_could_not_be_delivered(project, capsys, monkeypatch):
+    site = setup_drop(project, monkeypatch)
+    monkeypatch.setattr(cli, "build_notifier", lambda settings: UndeliveringNotifier())
+    assert cli.main(["run", "clients/acme-shop.yaml"]) == 0  # baseline: nothing to deliver
+    site.pages[A] = (200, page("109.00"))
+    capsys.readouterr()
+    assert cli.main(["run", "clients/acme-shop.yaml"]) == 2
+    out = capsys.readouterr().out
+    assert "  Undelivered: 1 alert(s) will be retried in the next run" in out
+
+
+def test_run_exits_0_when_everything_was_delivered(project, capsys, monkeypatch):
+    class DeliveringNotifier:
+        def send(self, config, store, run_id, events, report_path):
+            store.mark_delivered(run_id)
+            return []
+
+    site = setup_drop(project, monkeypatch)
+    monkeypatch.setattr(cli, "build_notifier", lambda settings: DeliveringNotifier())
+    cli.main(["run", "clients/acme-shop.yaml"])
+    site.pages[A] = (200, page("109.00"))
+    capsys.readouterr()
+    assert cli.main(["run", "clients/acme-shop.yaml"]) == 0
+    assert "Undelivered" not in capsys.readouterr().out
+
+
+class FakeTester:
+    def __init__(self, results):
+        self.results = results
+
+    def test(self, config):
+        return self.results
+
+
+def test_test_notify_prints_one_line_per_channel(project, capsys, monkeypatch):
+    results = [
+        ("client email (owner@acme.example)", True, "sent"),
+        ("client telegram (123)", False, "telegram failed: TelegramError: sendMessage returned HTTP 400"),
+        ("operator email", None, "not configured"),
+        ("operator telegram (999)", True, "sent"),
+    ]
+    monkeypatch.setattr(cli, "build_notifier", lambda settings: FakeTester(results))
+    assert cli.main(["test-notify", "clients/acme-shop.yaml"]) == 1
+    assert capsys.readouterr().out.splitlines() == [
+        "client email (owner@acme.example): sent",
+        "client telegram (123): FAILED: telegram failed: TelegramError: sendMessage returned HTTP 400",
+        "operator email: not configured",
+        "operator telegram (999): sent",
+    ]
+
+
+def test_test_notify_exits_0_when_every_configured_channel_works(project, capsys, monkeypatch):
+    results = [
+        ("client email (owner@acme.example)", True, "sent"),
+        ("client telegram", None, "not configured"),
+    ]
+    monkeypatch.setattr(cli, "build_notifier", lambda settings: FakeTester(results))
+    assert cli.main(["test-notify", "clients/acme-shop.yaml"]) == 0
+
+
+def test_test_notify_exits_1_when_no_channel_is_configured(project, capsys, monkeypatch):
+    results = [(name, None, "not configured") for name in ("client email", "client telegram", "operator email", "operator telegram")]
+    monkeypatch.setattr(cli, "build_notifier", lambda settings: FakeTester(results))
+    assert cli.main(["test-notify", "clients/acme-shop.yaml"]) == 1
+    assert capsys.readouterr().out.count("not configured") == 4
+
+
+def test_test_notify_uses_the_real_notifier_with_fake_senders(project, capsys, monkeypatch):
+    from helpers import ENV, Outbox
+    from pricemon.config import Settings
+    from pricemon.notify import Notifier
+
+    (project / "clients" / "acme-shop.yaml").write_text(
+        CONFIG + "notify:\n  email: [owner@acme.example]\n  telegram_chat_id: '123'\n", encoding="utf-8"
+    )
+    outbox = Outbox()
+    monkeypatch.setattr(
+        cli, "build_notifier",
+        lambda settings: Notifier(ENV, settings, send_email=outbox.email, send_telegram=outbox.telegram),
+    )
+    assert cli.main(["test-notify", "clients/acme-shop.yaml"]) == 0
+    assert len(outbox.emails) == 2 and len(outbox.telegrams) == 2

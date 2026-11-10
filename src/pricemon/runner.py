@@ -103,6 +103,8 @@ def run_client(
                 summary.warnings.extend(notifier.send(config, store, run_id, summary.events, report_path))
             except Exception as exc:  # a notification problem must not fail the run
                 summary.warnings.append(f"notification failed: {type(exc).__name__}: {exc}")
+            # Alerts that no channel took stay queued; the next real run sends them again.
+            summary.undelivered = len(store.undelivered_events(run_id))
         return summary
     finally:
         store.close()

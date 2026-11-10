@@ -60,6 +60,8 @@ def print_summary(summary: RunSummary) -> None:
     print(f"{summary.client}: run {summary.run_id}{label}")
     print(f"  URLs:   {summary.urls_total} total, {summary.urls_ok} ok, {summary.urls_failed} failed")
     print(f"  Events: {len(summary.events)} ({alerted} alerted, {to_verify} to verify)")
+    if summary.undelivered > 0:
+        print(f"  Undelivered: {summary.undelivered} alert(s) will be retried in the next run")
     for path in summary.report_paths:
         print(f"  Report: {path}")
     for warning in summary.warnings:
@@ -78,7 +80,21 @@ def cmd_run(args) -> int:
         dry_run=args.dry_run,
     )
     print_summary(summary)
-    return 0
+    return 2 if summary.undelivered > 0 else 0
+
+
+def cmd_test_notify(args) -> int:
+    config = load_client(args.config)
+    results = build_notifier(load_settings(SETTINGS_PATH)).test(config)
+    for label, outcome, detail in results:
+        if outcome is None:
+            print(f"{label}: not configured")
+        elif outcome:
+            print(f"{label}: sent")
+        else:
+            print(f"{label}: FAILED: {detail}")
+    configured = [outcome for _, outcome, _ in results if outcome is not None]
+    return 0 if configured and all(configured) else 1
 
 
 def cmd_check_url(args) -> int:
@@ -182,6 +198,10 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument("url")
     check.add_argument("--browser", action="store_true", help="load the page in a headless browser")
     check.set_defaults(handler=cmd_check_url)
+
+    test_notify = commands.add_parser("test-notify", help="send a test message through every channel of a client")
+    test_notify.add_argument("config", type=Path)
+    test_notify.set_defaults(handler=cmd_test_notify)
 
     validate = commands.add_parser("validate", help="check a client config without fetching anything")
     validate.add_argument("config", type=Path)

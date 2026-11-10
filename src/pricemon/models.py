@@ -10,6 +10,7 @@ BLOCKED = "blocked"
 DISALLOWED = "disallowed"
 NOT_FOUND = "not_found"
 EXTRACT_ERROR = "extract_error"
+VERIFY = "verify"  # extracted fine, but the price jump is held until the operator checks it
 
 
 @dataclass(frozen=True)
@@ -68,6 +69,10 @@ class Event:
     verify: bool
     alerted: bool
     currency: str | None = None
+    # Set when the event is read back from the store. Left out of comparisons so
+    # an event built by hand equals the same event read back.
+    id: int | None = field(default=None, compare=False)
+    run_id: int | None = field(default=None, compare=False)
 
 
 @dataclass
@@ -81,3 +86,4 @@ class RunSummary:
     events: list[Event] = field(default_factory=list)
     report_paths: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    undelivered: int = 0  # alerted events still waiting to reach the client

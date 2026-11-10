@@ -26,7 +26,11 @@ def test_build_message_without_attachment():
 @pytest.fixture
 def smtp(monkeypatch):
     """Replace smtplib's classes with recorders. Returns the list of connections made."""
-    connections = []
+    class Connections(list):
+        refused = {}  # what the fake server answers to send_message
+
+    connections = Connections()
+    refused = connections.refused
 
     def recorder(kind):
         class FakeSMTP:
@@ -48,6 +52,7 @@ def smtp(monkeypatch):
 
             def send_message(self, message):
                 self.calls.append(("send", message["To"], message["Subject"]))
+                return refused
 
         return FakeSMTP
 
@@ -68,3 +73,10 @@ def test_send_email_uses_ssl_on_port_465(smtp):
     (connection,) = smtp
     assert (connection.kind, connection.port) == ("ssl", 465)
     assert connection.calls == [("login", "monitor", "secret"), ("send", "a@x.example", "Subject")]
+
+
+def test_send_email_returns_the_refused_recipients(smtp):
+    assert send_email(ENV, ["a@x.example"], "Subject", "Body") == {}
+    smtp.refused["b@x.example"] = (550, b"no such user")
+    assert send_email(ENV, ["a@x.example", "b@x.example"], "Subject", "Body") == {"b@x.example": (550, b"no such user")}
+    assert send_email({**ENV, "SMTP_PORT": "465"}, ["b@x.example"], "Subject", "Body") == smtp.refused

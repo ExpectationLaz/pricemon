@@ -22,16 +22,21 @@ def build_message(sender: str, to: list[str], subject: str, body: str, attachmen
     return message
 
 
-def send_email(env: Mapping[str, str], to: list[str], subject: str, body: str, attachment: Path | None = None) -> None:
-    """Send one email. Port 465 uses SSL from the start; any other port uses STARTTLS."""
+def send_email(
+    env: Mapping[str, str], to: list[str], subject: str, body: str, attachment: Path | None = None
+) -> dict:
+    """Send one email. Port 465 uses SSL from the start; any other port uses STARTTLS.
+
+    Returns the recipients the server refused (empty when all were accepted).
+    """
     message = build_message(env["SMTP_FROM"], to, subject, body, attachment)
     port = int(env.get("SMTP_PORT") or 587)
     if port == 465:
         with smtplib.SMTP_SSL(env["SMTP_HOST"], port, timeout=30) as smtp:
             smtp.login(env["SMTP_USER"], env["SMTP_PASSWORD"])
-            smtp.send_message(message)
+            return smtp.send_message(message)
     else:
         with smtplib.SMTP(env["SMTP_HOST"], port, timeout=30) as smtp:
             smtp.starttls()
             smtp.login(env["SMTP_USER"], env["SMTP_PASSWORD"])
-            smtp.send_message(message)
+            return smtp.send_message(message)

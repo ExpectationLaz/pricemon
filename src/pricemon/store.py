@@ -49,7 +49,8 @@ CREATE TABLE IF NOT EXISTS events (
     new_price TEXT,
     change_pct TEXT,
     verify INTEGER NOT NULL DEFAULT 0,
-    alerted INTEGER NOT NULL DEFAULT 0
+    alerted INTEGER NOT NULL DEFAULT 0,
+    delivered INTEGER NOT NULL DEFAULT 0
 );
 """
 
@@ -83,6 +84,22 @@ def _observation(row: sqlite3.Row) -> Observation:
     )
 
 
+def _event(row: sqlite3.Row) -> Event:
+    return Event(
+        url=row["url"],
+        product_name=row["product_name"],
+        type=row["type"],
+        old_price=_decimal(row["old_price"]),
+        new_price=_decimal(row["new_price"]),
+        change_pct=_decimal(row["change_pct"]),
+        verify=bool(row["verify"]),
+        alerted=bool(row["alerted"]),
+        currency=row["currency"],
+        id=row["id"],
+        run_id=row["run_id"],
+    )
+
+
 class Store:
     def __init__(self, path):
         path = Path(path)
@@ -90,6 +107,11 @@ class Store:
         self.db = sqlite3.connect(path)
         self.db.row_factory = sqlite3.Row
         self.db.executescript(_SCHEMA)
+        # A database created before delivery tracking has no such column.
+        columns = [row["name"] for row in self.db.execute("PRAGMA table_info(events)")]
+        if "delivered" not in columns:
+            with self.db:
+                self.db.execute("ALTER TABLE events ADD COLUMN delivered INTEGER NOT NULL DEFAULT 0")
 
     def close(self) -> None:
         self.db.close()
@@ -199,17 +221,47 @@ class Store:
             " WHERE e.run_id = ? ORDER BY e.id",
             (run_id,),
         )
-        return [
-            Event(
-                url=row["url"],
-                product_name=row["product_name"],
-                type=row["type"],
-                old_price=_decimal(row["old_price"]),
-                new_price=_decimal(row["new_price"]),
-                change_pct=_decimal(row["change_pct"]),
-                verify=bool(row["verify"]),
-                alerted=bool(row["alerted"]),
-                currency=row["currency"],
+        return [_event(row) for row in rows]
+
+    def undelivered_events(self, up_to_run_id: int) -> list[Event]:
+        """Alerted events of real runs up to a run that have not reached the client yet, oldest first."""
+        rows = self.db.execute(
+            "SELECT e.*, o.currency AS currency FROM events e"
+            " JOIN observations o ON o.id = e.observation_id"
+            " WHERE e.alerted = 1 AND e.delivered = 0 AND e.run_id <= ?"
+            " AND e.run_id IN (SELECT id FROM runs WHERE dry_run = 0) ORDER BY e.id",
+            (up_to_run_id,),
+        )
+        return [_event(row) for row in rows]
+
+    def mark_delivered(self, up_to_run_id: int) -> None:
+        """Mark exactly the events undelivered_events(up_to_run_id) returns as delivered."""
+        with self.db:
+            self.db.execute(
+                "UPDATE events SET delivered = 1"
+                " WHERE alerted = 1 AND delivered = 0 AND run_id <= ?"
+                " AND run_id IN (SELECT id FROM runs WHERE dry_run = 0)",
+                (up_to_run_id,),
             )
-            for row in rows
-        ]
+
+    # held observations
+
+    def latest_observation(self, url: str) -> Observation | None:
+        """The newest observation of a URL from a real run, whatever its status."""
+        row = self.db.execute(
+            "SELECT * FROM observations WHERE url = ?" + _REAL_RUNS_ONLY + " ORDER BY id DESC LIMIT 1", (url,)
+        ).fetchone()
+        return None if row is None else _observation(row)
+
+    def accept_observation(self, observation_id: int, alert_types: list[str]) -> None:
+        """Make a held observation a trusted one, and queue its events of the given types for the client."""
+        with self.db:
+            self.db.execute(
+                "UPDATE observations SET status = ?, error = NULL WHERE id = ?", (OK, observation_id)
+            )
+            if alert_types:
+                marks = ", ".join("?" for _ in alert_types)
+                self.db.execute(
+                    f"UPDATE events SET alerted = 1, delivered = 0 WHERE observation_id = ? AND type IN ({marks})",
+                    (observation_id, *alert_types),
+                )
