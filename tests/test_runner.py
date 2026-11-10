@@ -136,3 +136,10 @@ def test_fetcher_crash_is_one_failed_page():
     obs = observe(A, "Drill", BrokenFetcher(), None)
     assert obs.status == FETCH_ERROR
     assert "socket exploded" in obs.error
+
+
+def test_run_writes_the_report(tmp_path):
+    summary = run(healthy_site(), tmp_path)
+    assert [path.rsplit(".", 1)[1] for path in summary.report_paths] == ["xlsx", "csv"]
+    reports = tmp_path / "data" / "acme" / "reports"
+    assert sorted(p.suffix for p in reports.iterdir()) == [".csv", ".xlsx"]

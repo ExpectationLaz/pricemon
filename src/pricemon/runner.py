@@ -8,6 +8,7 @@ from .detect import detect
 from .extract import extract
 from .fetch import Fetcher
 from .models import EXTRACT_ERROR, FETCH_ERROR, OK, Observation, RunSummary
+from .report import write_report
 from .store import Store
 
 
@@ -90,6 +91,8 @@ def run_client(
                 store.add_event(run_id, saved.id, event)
                 summary.events.append(event)
         store.finish_run(run_id, now().isoformat(), summary.urls_total, summary.urls_ok, summary.urls_failed)
+        report_paths = write_report(config, store, run_id, client_dir / "reports")
+        summary.report_paths = [str(path) for path in report_paths]
         return summary
     finally:
         store.close()

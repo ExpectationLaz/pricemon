@@ -121,3 +121,40 @@ def test_fatal_error_exits_1(project, capsys, monkeypatch):
     monkeypatch.setattr(cli, "build_fetcher", broken)
     assert cli.main(["run", "clients/acme-shop.yaml"]) == 1
     assert "Fatal error: boom" in capsys.readouterr().err
+
+
+def test_run_prints_the_report_path(project, capsys, monkeypatch):
+    site = Site({A: (200, page("119.00")), B: (200, page("125.00"))})
+    monkeypatch.setattr(cli, "build_fetcher", lambda settings: make_fetcher(site))
+    assert cli.main(["run", "clients/acme-shop.yaml", "--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert "Report: " in out and ".xlsx" in out
+
+
+def test_report_command_rebuilds_todays_report(project, capsys, monkeypatch):
+    site = Site({A: (200, page("119.00")), B: (200, page("125.00"))})
+    monkeypatch.setattr(cli, "build_fetcher", lambda settings: make_fetcher(site))
+    cli.main(["run", "clients/acme-shop.yaml", "--dry-run"])
+    for old in (project / "data" / "acme-shop" / "reports").iterdir():
+        old.unlink()
+    requests_before = len(site.requested)
+    capsys.readouterr()
+    assert cli.main(["report", "clients/acme-shop.yaml"]) == 0
+    out = capsys.readouterr().out
+    assert ".xlsx" in out
+    assert len(list((project / "data" / "acme-shop" / "reports").iterdir())) == 2
+    assert len(site.requested) == requests_before  # nothing was fetched
+
+
+def test_report_command_without_a_run_on_that_date(project, capsys, monkeypatch):
+    site = Site({A: (200, page("119.00")), B: (200, page("125.00"))})
+    monkeypatch.setattr(cli, "build_fetcher", lambda settings: make_fetcher(site))
+    cli.main(["run", "clients/acme-shop.yaml", "--dry-run"])
+    capsys.readouterr()
+    assert cli.main(["report", "clients/acme-shop.yaml", "--date", "2000-01-01"]) == 1
+    assert "No run found on 2000-01-01" in capsys.readouterr().err
+
+
+def test_report_command_without_any_data(project, capsys):
+    assert cli.main(["report", "clients/acme-shop.yaml"]) == 1
+    assert "No data for client acme-shop" in capsys.readouterr().err

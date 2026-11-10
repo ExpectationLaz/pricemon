@@ -1,7 +1,8 @@
-"""Command line interface: run, check-url, validate."""
+"""Command line interface: run, check-url, report, validate."""
 
 import argparse
 import sys
+from datetime import date, datetime
 from pathlib import Path
 
 from .config import (
@@ -17,7 +18,9 @@ from .config import (
 from .extract import ExtractError, extract
 from .fetch import Fetcher
 from .models import BLOCKED, DISALLOWED, FETCH_ERROR, NOT_FOUND, OK, RunSummary
+from .report import write_report
 from .runner import run_client
+from .store import Store
 
 # Relative to the working directory, which is the project folder.
 SITES_DIR = Path("sites")
@@ -124,6 +127,32 @@ def cmd_validate(args) -> int:
     return 0
 
 
+def cmd_report(args) -> int:
+    config = load_client(args.config)
+    day = date.fromisoformat(args.date) if args.date else date.today()
+    client_dir = DATA_DIR / config.client
+    db_path = client_dir / "pricemon.db"
+    if not db_path.exists():
+        print(f"No data for client {config.client}: run it first", file=sys.stderr)
+        return 1
+    store = Store(db_path)
+    try:
+        run_ids = [
+            run["id"]
+            for run in store.runs()
+            if datetime.fromisoformat(run["started_at"]).astimezone().date() == day
+        ]
+        if not run_ids:
+            print(f"No run found on {day.isoformat()}", file=sys.stderr)
+            return 1
+        paths = write_report(config, store, run_ids[-1], client_dir / "reports")
+    finally:
+        store.close()
+    for path in paths:
+        print(path)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="pricemon", description="Daily competitor price and stock monitoring")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -141,6 +170,11 @@ def build_parser() -> argparse.ArgumentParser:
     validate = commands.add_parser("validate", help="check a client config without fetching anything")
     validate.add_argument("config", type=Path)
     validate.set_defaults(handler=cmd_validate)
+
+    report = commands.add_parser("report", help="rebuild a day's report from stored data, without fetching")
+    report.add_argument("config", type=Path)
+    report.add_argument("--date", help="local date of the run, YYYY-MM-DD (default: today)")
+    report.set_defaults(handler=cmd_report)
 
     return parser
 
