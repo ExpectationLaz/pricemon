@@ -10,6 +10,8 @@ from pathlib import Path
 
 from .models import OK, Event, Observation
 
+_REAL_RUNS_ONLY = " AND run_id IN (SELECT id FROM runs WHERE dry_run = 0)"
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
     id INTEGER PRIMARY KEY,
@@ -134,23 +136,37 @@ class Store:
             )
         return replace(obs, id=cursor.lastrowid)
 
-    def last_ok(self, url: str, before_run_id: int | None = None) -> Observation | None:
-        """The most recent successful observation of a URL, optionally before a given run."""
+    def last_ok(
+        self, url: str, before_run_id: int | None = None, include_dry_runs: bool = True
+    ) -> Observation | None:
+        """The most recent successful observation of a URL, optionally before a given run.
+
+        A real run passes include_dry_runs=False so that dry runs never become its baseline.
+        """
         sql = "SELECT * FROM observations WHERE url = ? AND status = ?"
         params: list = [url, OK]
         if before_run_id is not None:
             sql += " AND run_id < ?"
             params.append(before_run_id)
+        if not include_dry_runs:
+            sql += _REAL_RUNS_ONLY
         row = self.db.execute(sql + " ORDER BY id DESC LIMIT 1", params).fetchone()
         return None if row is None else _observation(row)
 
-    def consecutive_failures(self, url: str, up_to_run_id: int | None = None) -> int:
-        """How many runs in a row a URL has failed, counting back from the latest (or given) run."""
+    def consecutive_failures(
+        self, url: str, up_to_run_id: int | None = None, include_dry_runs: bool = True
+    ) -> int:
+        """How many runs in a row a URL has failed, counting back from the latest (or given) run.
+
+        A real run passes include_dry_runs=False so that dry runs do not affect the count.
+        """
         sql = "SELECT status FROM observations WHERE url = ?"
         params: list = [url]
         if up_to_run_id is not None:
             sql += " AND run_id <= ?"
             params.append(up_to_run_id)
+        if not include_dry_runs:
+            sql += _REAL_RUNS_ONLY
         count = 0
         for row in self.db.execute(sql + " ORDER BY id DESC", params):
             if row["status"] == OK:

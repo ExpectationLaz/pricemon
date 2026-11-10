@@ -118,3 +118,19 @@ def test_data_survives_reopening(tmp_path):
     second = Store(path)
     assert second.last_ok(A).price == Decimal("119")
     second.close()
+
+
+def test_dry_run_observations_can_be_excluded(store):
+    real = store.start_run("2026-11-10T07:00:00+00:00")
+    store.add_observation(real, ok(A, "119"))
+    dry = store.start_run("2026-11-11T07:00:00+00:00", dry_run=True)
+    store.add_observation(dry, ok(A, "109"))
+    assert store.last_ok(A).price == Decimal("109")
+    assert store.last_ok(A, include_dry_runs=False).price == Decimal("119")
+    assert store.last_ok(A, before_run_id=dry, include_dry_runs=False).price == Decimal("119")
+
+    dry_failure = store.start_run("2026-11-12T07:00:00+00:00", dry_run=True)
+    store.add_observation(dry_failure, failed(A))
+    assert store.consecutive_failures(A) == 1
+    assert store.consecutive_failures(A, include_dry_runs=False) == 0
+    assert store.last_ok(B, include_dry_runs=False) is None
