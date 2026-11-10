@@ -146,6 +146,8 @@ stock:
   out_of_stock_text: ["Sold out", "Out of stock"]
 ```
 
+An invalid CSS selector in a site rules file is a config error at load time.
+
 A site rules file is matched to a URL by exact hostname after removing a
 leading `www.`. `shop.example.com` and `example.com` are different sites and
 need separate files.
@@ -214,8 +216,15 @@ The chain runs in this order and stops at the first step that yields a price:
 3. `rules`: the CSS rules from the site rules file.
 
 Steps 1 and 2 are skipped when the site rules set `skip_structured_data: true`.
-Fields missing from the winning step are filled from later steps where
-possible (for example price from JSON-LD and stock from site rules).
+Fields missing from the winning step are filled from the other steps where
+possible, in chain order (for example price from JSON-LD and stock from site
+rules, or price from meta tags and title from JSON-LD).
+
+Text read by a site rule is taken with a space between text nodes and its
+whitespace is collapsed. A rule's price value that contains more than one
+number (`<del>20,00</del> 15,00`, or cents in a separate element) is ambiguous
+and gives no price; the rule must use a narrower selector or an attribute. The
+extraction error says why a rule's price was rejected.
 
 `in_stock` is `true`, `false` or `null` (unknown). Unknown is a valid result.
 `currency` is a three-letter code or `null` when no step provides one; a
