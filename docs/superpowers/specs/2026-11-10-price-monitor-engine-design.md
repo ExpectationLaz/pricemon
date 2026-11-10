@@ -225,13 +225,16 @@ missing currency is not an error. A page with no price from any step is an
 Price parsing (`price.py`) turns text such as `1.299,00 €`, `$1,299.00` or
 `1 299` into a `Decimal`:
 
-- Currency symbols, letters and spaces are removed.
+- The first number in the text is used. Whitespace joins digits only as a
+  thousands separator in the integer part (`1 299,50`); two numbers separated
+  by a space (`12,50 15,00`) are never merged.
 - If both `.` and `,` appear, the last one is the decimal separator.
 - If only one of them appears and it appears more than once (`1,299,000`), it
   is a thousands separator.
 - If only one of them appears and it appears once, it is a thousands separator
-  when exactly three digits follow it (`1.299` is 1299) and the decimal
-  separator otherwise (`12.50`, `12,5`).
+  when exactly three digits follow it and one to three digits that are not all
+  zeros precede it (`1.299` is 1299). Otherwise it is the decimal separator
+  (`12.50`, `12,5`, `0.125`, `1234.567`).
 - `decimal_separator` in the site rules overrides this detection.
 - A result that is zero, negative or unparsable is an extraction error.
 
