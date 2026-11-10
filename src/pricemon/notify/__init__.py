@@ -46,7 +46,7 @@ def operator_digest(
     """The message for the operator, or None when nothing needs attention.
 
     A failing URL is reported in the run where its failure streak reaches the
-    threshold, and not again until it has recovered and failed again.
+    threshold, and again every `threshold` runs while it keeps failing.
     """
     # A real run ignores failures seen in dry runs; a dry run counts everything.
     include_dry_runs = bool(store.run(run_id)["dry_run"])
@@ -55,10 +55,12 @@ def operator_digest(
         if obs.status == OK:
             continue
         failures = store.consecutive_failures(obs.url, up_to_run_id=run_id, include_dry_runs=include_dry_runs)
-        if failures == threshold:
+        # Alert when the streak reaches the threshold, and again every `threshold`
+        # runs while the page keeps failing, so one lost alert is not the last word.
+        if failures >= threshold and failures % threshold == 0:
             lines.append(
                 f"FAILING {obs.url}: {obs.status} ({obs.error or 'no detail'}), "
-                f"{threshold} failed run(s) in a row"
+                f"{failures} failed run(s) in a row"
             )
     lines.extend(f"VERIFY {event_line(event)}" for event in events if event.verify)
     if not lines:
@@ -112,10 +114,13 @@ class Notifier:
             warnings.append(f"email failed: {type(exc).__name__}: {exc}")
 
     def _telegram(self, chat_id: str, text: str, attachment: Path | None, warnings: list[str]) -> None:
-        if not self.env.get("TELEGRAM_BOT_TOKEN"):
+        token = self.env.get("TELEGRAM_BOT_TOKEN")
+        if not token:
             warnings.append("telegram skipped: TELEGRAM_BOT_TOKEN missing in .env")
             return
         try:
             self._send_telegram(self.env, chat_id, text, attachment)
         except Exception as exc:
-            warnings.append(f"telegram failed: {type(exc).__name__}: {exc}")
+            # The API URL contains the bot token: never let it reach a warning or a log.
+            detail = str(exc).replace(token, "***")
+            warnings.append(f"telegram failed: {type(exc).__name__}: {detail}")

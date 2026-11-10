@@ -55,6 +55,15 @@ def test_network_error_does_not_leak_the_token():
     assert str(error.value) == "sendMessage failed: ConnectError"
 
 
+def test_unexpected_error_does_not_leak_the_token():
+    def handler(request):
+        raise ValueError("bad request to api.telegram.org/botTOKEN")
+
+    with pytest.raises(TelegramError) as error:
+        send_telegram(ENV, "123", "hello", client=client_for(handler))
+    assert str(error.value) == "sendMessage failed: ValueError"
+
+
 def test_long_text_is_truncated():
     seen = []
 

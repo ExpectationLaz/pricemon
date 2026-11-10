@@ -84,7 +84,7 @@ def test_client_digest_without_alerted_events():
     assert client_digest(config(send_when_no_changes=True), quiet) == "acme-shop: no changes today"
 
 
-def test_operator_digest_fires_once_when_the_threshold_is_crossed(store):
+def test_operator_digest_fires_when_the_threshold_is_reached(store):
     cfg = config()
     first, second, third = failing_run(store, 1), failing_run(store, 2), failing_run(store, 3)
     assert operator_digest(cfg, store, first, [], 3) is None
@@ -96,6 +96,16 @@ def test_operator_digest_fires_once_when_the_threshold_is_crossed(store):
     ]
     fourth = failing_run(store, 4)
     assert operator_digest(cfg, store, fourth, [], 3) is None
+
+
+def test_operator_digest_repeats_while_the_page_keeps_failing(store):
+    cfg = config()
+    runs = [failing_run(store, day) for day in range(1, 8)]
+    alerted = [day for day, run_id in enumerate(runs, start=1) if operator_digest(cfg, store, run_id, [], 3)]
+    assert alerted == [3, 6]
+    assert f"FAILING {A}: fetch_error (HTTP 500), 6 failed run(s) in a row" in operator_digest(
+        cfg, store, runs[5], [], 3
+    )
 
 
 def test_operator_digest_ignores_failures_seen_in_dry_runs(store):
@@ -193,6 +203,17 @@ def test_a_failing_channel_becomes_a_warning_and_the_other_still_sends(store, tm
     warnings = notifier.send(cfg, store, run_id, [price_event()], tmp_path / "r.xlsx")
     assert warnings == ["email failed: OSError: connection refused"]
     assert len(outbox.telegrams) == 1
+
+
+def test_a_telegram_failure_never_puts_the_bot_token_in_a_warning(store, tmp_path):
+    run_id = store.start_run("2026-11-10T07:00:00+00:00")
+
+    def broken_telegram(env, chat_id, text, attachment=None):
+        raise RuntimeError("cannot open https://api.telegram.org/botTOKEN/sendMessage")
+
+    notifier = Notifier(ENV, Settings(), send_email=Outbox().email, send_telegram=broken_telegram)
+    warnings = notifier.send(config(telegram_chat_id="123"), store, run_id, [price_event()], tmp_path / "r.xlsx")
+    assert warnings == ["telegram failed: RuntimeError: cannot open https://api.telegram.org/bot***/sendMessage"]
 
 
 def test_events_without_a_client_channel_give_a_warning(store, tmp_path):

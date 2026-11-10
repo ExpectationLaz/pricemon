@@ -19,7 +19,7 @@ class TelegramError(Exception):
 def _post(client: httpx.Client, base: str, method: str, **kwargs) -> None:
     try:
         response = client.post(f"{base}/{method}", **kwargs)
-    except httpx.HTTPError as exc:
+    except Exception as exc:
         raise TelegramError(f"{method} failed: {type(exc).__name__}") from None
     if response.status_code != 200:
         raise TelegramError(f"{method} returned HTTP {response.status_code}")
