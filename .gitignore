@@ -11,3 +11,6 @@ settings.yaml
 clients/*
 !clients/example.yaml
 data/
+
+# subagent-driven-development scratch
+.superpowers/
