@@ -5,7 +5,7 @@ from decimal import Decimal, InvalidOperation
 
 # Characters that may act as a thousands separator between digit groups:
 # space, no-break space, narrow no-break space, thin space. Not newline or tab.
-_THOUSANDS_SPACE = r"[    ]"
+_THOUSANDS_SPACE = r"[ \u00a0\u202f\u2009]"
 # The first number in the text. A space joins digits only as a thousands
 # separator in the integer part ("1 299,50"), never between two separate numbers.
 _NUMBER = re.compile(
