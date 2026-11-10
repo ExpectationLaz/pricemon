@@ -1,7 +1,8 @@
 # Price Monitor Engine: Design
 
 Date: 2026-11-10
-Status: approved design, not yet implemented
+Status: implemented on branch `engine`; this document was updated during the
+build wherever review changed the behaviour
 
 ## 1. Purpose
 
@@ -192,13 +193,20 @@ Input: a URL and the site rules for its domain. Output: a `FetchResult` with
   no rules. If the file cannot be read (network error or 5xx) the rules are
   unknown, so that domain's URLs get `fetch_error` for this run and are not
   fetched; a 429 on `robots.txt` gives them `blocked`.
+- Redirects are handled by the fetcher, not followed blindly. A redirect to
+  the same host is followed (at most 5 hops), with `robots.txt` and the rate
+  limit applied to each hop. A redirect to another host is a `fetch_error`
+  ("redirected to another site"), because it would skip that site's rules and
+  usually means the product page is gone.
 - Block detection: HTTP 403 or 429, or a response body that is a known
   challenge page (CAPTCHA or "checking your browser" markers), gives status
   `blocked`. The engine never retries around a block, solves a challenge, or
   rotates identity.
 - `fetcher: browser` loads the page in headless Chromium through Playwright
   and returns the rendered HTML. If Playwright is not installed the result is
-  `fetch_error` with a message that says how to install it.
+  `fetch_error` with a message that says how to install it. The browser is not
+  a way around bot protection: if the first response is a challenge page the
+  result is `blocked`, even when the page later renders normally.
 
 Fetch statuses: `ok`, `fetch_error`, `blocked`, `disallowed`, `not_found`
 (HTTP 404 or 410).
@@ -263,8 +271,12 @@ observations(id, run_id, url, product_name, fetched_at, status, http_status,
   index on (url, fetched_at)
 
 events(id, run_id, observation_id, url, product_name, type,
-       old_price, new_price, change_pct, verify, alerted)
+       old_price, new_price, change_pct, verify, alerted, delivered)
 ```
+
+`delivered` records whether an alerted event has reached the client (see 5.6).
+An observation whose price change is held for verification has status
+`verify` (see 5.4).
 
 Every configured URL writes one observation per run, including failures. An
 observation's `status` is one of the fetch statuses from 5.1 or
@@ -291,6 +303,16 @@ gives a list of events. It does no I/O.
 - An event is alerted when its type is in `alerts.events`, `verify` is false,
   and for price events the absolute change is at least `min_price_change_pct`.
   Events that are not alerted are still stored and still appear in the report.
+
+A suspicious price is held, not adopted. When an observation produces a
+`verify` event, the runner stores it with status `verify` instead of `ok`, and
+none of its events are alerted. A held observation is never a baseline: later
+runs keep comparing with the last trusted price, the row shows that trusted
+price with status `verify` in the report, and the operator is alerted every
+run until it is resolved. The operator resolves it either by fixing the site
+rules (the next run then reads a normal price) or, when the new price is real,
+with `pricemon accept`, which makes the held observation the baseline and
+queues its event for the client's next digest.
 
 ### 5.5 Reporter (`report.py`)
 
@@ -340,6 +362,16 @@ One digest per run per channel, never one message per event.
   log line ever includes that URL.
 - A sending failure is logged and recorded in the run summary. It does not
   fail the run, and the report file is still written.
+- A client alert is never lost. The client digest is built from every alerted
+  event that has not yet been delivered, so an alert that could not be sent is
+  included in the next real run's digest, with a line saying so. An event
+  counts as delivered once at least one of the client's channels accepted the
+  digest. A problem on any client channel is also reported to the operator
+  (`DELIVERY ...`).
+- The client digest says how many pages could not be checked in that run
+  ("2 of 14 pages could not be checked today."), so "no changes" is never
+  claimed for pages that were not read.
+- SMTP connections verify the server certificate.
 
 ### 5.7 Runner and CLI (`runner.py`, `cli.py`)
 
@@ -348,6 +380,8 @@ pricemon run <client.yaml> [--dry-run]
 pricemon check-url <url> [--browser]
 pricemon report <client.yaml> [--date YYYY-MM-DD] [--dry-run]
 pricemon validate <client.yaml>
+pricemon test-notify <client.yaml>
+pricemon accept <client.yaml> <url>
 ```
 
 - `run`: load config, start a run, fetch and extract every URL, store
@@ -367,8 +401,14 @@ pricemon validate <client.yaml>
 - `validate`: load and validate a client config and the site rules it needs,
   and report which domains have no rules file.
 
-Exit codes: 0 when the run completed, even if some pages failed; 1 for an
-invalid config or a fatal error.
+- `test-notify`: send a test message to the client's and the operator's
+  channels and report the outcome per channel. Used at onboarding, because a
+  dry run sends nothing and the first real run is a silent baseline.
+- `accept`: accept a price held for verification as real (see 5.4).
+
+Exit codes for `run`: 0 when the run completed, even if some pages failed; 1
+for an invalid config or a fatal error; 2 when the run completed but a client
+alert could not be delivered (it is retried in the next run).
 
 ## 6. Scheduling
 
@@ -384,7 +424,9 @@ process. Moving to a server later means the same command under cron.
 | Site blocks the request | Status `blocked`; no circumvention; shown under Problems |
 | `robots.txt` disallows the URL | Status `disallowed`; not fetched |
 | Page fails several runs in a row | Operator digest at the configured threshold |
-| Price change at or above the verify threshold | Stored, marked "verify", not sent to the client, sent to the operator |
+| Price change at or above the verify threshold | Held: stored with status `verify`, never a baseline, not sent to the client, sent to the operator every run until fixed or accepted |
+| Client digest cannot be delivered | Alert stays queued and is included in the next run's digest; operator is told; exit code 2 |
+| Page redirects to another site | `fetch_error`; the other site is not requested |
 | Notification channel fails or is unconfigured | Logged in the run summary; run and report unaffected |
 | Invalid client config | Run does not start; exit code 1 with the validation message |
 
@@ -411,8 +453,9 @@ process. Moving to a server later means the same command under cron.
   challenge-page detection, robots handling and rate limiting (with a fake
   clock).
 - **Store**: a temporary SQLite file.
-- **Notifier**: fake senders that capture messages; digest wording and the
-  operator "once per failure streak" rule.
+- **Notifier**: fake senders that capture messages; digest wording, the
+  repeating operator alert, resending of undelivered alerts, and that the bot
+  token never appears in a warning.
 - **Runner**: an end-to-end test with mocked HTTP and fake senders over two
   runs, checking the database, the report sheets and the digests.
 
