@@ -6,7 +6,7 @@ as `blocked` and left alone.
 
 import re
 import time
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 from urllib.robotparser import RobotFileParser
 
 import httpx
@@ -27,6 +27,7 @@ _CHALLENGE_TITLES = (
 _CHALLENGE_MARKERS = ("captcha-delivery.com", "px-captcha")
 _TITLE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 _FIRST_RETRY_DELAY = 2.0
+_MAX_REDIRECTS = 5
 
 
 def looks_like_challenge(html: str) -> bool:
@@ -62,7 +63,6 @@ class Fetcher:
         self.client = client or httpx.Client(
             headers={"User-Agent": settings.user_agent},
             timeout=settings.timeout_seconds,
-            follow_redirects=True,
         )
         self._clock = clock
         self._sleep = sleep
@@ -114,7 +114,14 @@ class Fetcher:
         parts = urlsplit(url)
         self._wait(host, interval)
         try:
-            response = self.client.get(f"{parts.scheme}://{parts.netloc}/robots.txt")
+            robots_url = f"{parts.scheme}://{parts.netloc}/robots.txt"
+            response = self.client.get(robots_url, follow_redirects=False)
+            location = response.headers.get("location")
+            if 300 <= response.status_code < 400 and location:
+                target = urljoin(robots_url, location)
+                if hostname(target) == host:  # followed once; any other redirect means no rules
+                    self._wait(host, interval)
+                    response = self.client.get(target, follow_redirects=False)
         except httpx.HTTPError as exc:
             return FetchResult(FETCH_ERROR, error=f"robots.txt unavailable: {type(exc).__name__}")
         status = response.status_code
@@ -128,19 +135,52 @@ class Fetcher:
         parser.parse(response.text.splitlines())
         return parser
 
+    def _get_following_redirects(self, url: str, host: str, interval: float) -> "httpx.Response | FetchResult":
+        """GET a page and follow redirects by hand, staying on the same site.
+
+        A redirect to another site is not followed: it would skip that site's
+        robots.txt and rate limit, and a discontinued product that redirects
+        elsewhere would look like a price change. Returns the final response,
+        or a FetchResult when a redirect ends the fetch.
+        """
+        current = url
+        for hop in range(_MAX_REDIRECTS + 1):
+            self._wait(host, interval)
+            response = self.client.get(current, follow_redirects=False)
+            status = response.status_code
+            if not 300 <= status < 400:
+                return response
+            location = response.headers.get("location")
+            if not location:
+                return FetchResult(FETCH_ERROR, status, error=f"HTTP {status}")
+            target = urljoin(current, location)
+            if hostname(target) != host or urlsplit(target).scheme not in ("http", "https"):
+                return FetchResult(
+                    FETCH_ERROR, status, error=f"redirected to another site: {hostname(target) or target}"
+                )
+            if hop == _MAX_REDIRECTS:
+                return FetchResult(FETCH_ERROR, status, error="too many redirects")
+            if self.settings.respect_robots_txt:
+                refusal = self._robots_refusal(target, host, interval)
+                if refusal is not None:
+                    return refusal
+            current = target
+        raise AssertionError("unreachable")  # the loop always returns
+
     def _fetch_http(self, url: str, host: str, interval: float) -> FetchResult:
         attempts = self.settings.retries + 1
         delay = _FIRST_RETRY_DELAY
         error = "no attempt made"
         http_status = None
         for attempt in range(attempts):
-            self._wait(host, interval)
             try:
-                response = self.client.get(url)
+                response = self._get_following_redirects(url, host, interval)
             except httpx.HTTPError as exc:
                 error = f"{type(exc).__name__}: {exc}"
                 http_status = None
             else:
+                if isinstance(response, FetchResult):  # a redirect that must not be followed
+                    return response
                 result = classify(response.status_code, response.text)
                 if result is not None:
                     return result

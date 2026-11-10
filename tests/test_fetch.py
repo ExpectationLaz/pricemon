@@ -26,7 +26,7 @@ def make(handler, **overrides):
     """A Fetcher on a mock transport and a fake clock. Robots checks are off unless enabled."""
     clock = FakeClock()
     settings = Settings(**{"respect_robots_txt": False, **overrides})
-    client = httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=True)
+    client = httpx.Client(transport=httpx.MockTransport(handler))
     return Fetcher(settings, client=client, clock=clock.now, sleep=clock.sleep), clock
 
 
@@ -242,6 +242,129 @@ def test_a_failing_robots_file_on_one_host_does_not_affect_another():
     fetcher, _ = make(handler, respect_robots_txt=True, min_interval_seconds=0)
     assert fetcher.fetch("https://a.example/p/1").status == FETCH_ERROR
     assert fetcher.fetch("https://b.example/p/1").status == OK
+
+
+# redirects
+
+
+def redirecting(routes, default=(200, PAGE)):
+    """A handler for a fake web: maps 'host/path' to (status, body-or-location). Records 'host/path' requests."""
+    calls = []
+
+    def handler(request):
+        key = f"{request.url.host}{request.url.path}"
+        calls.append(key)
+        status, value = routes.get(key, default)
+        if 300 <= status < 400:
+            return httpx.Response(status, headers={"Location": value} if value else {})
+        return httpx.Response(status, text=value)
+
+    return handler, calls
+
+
+def test_a_same_host_redirect_is_followed_with_the_rate_limit_between_requests():
+    handler, calls = redirecting({"a.example/old": (301, "/new")})
+    fetcher, clock = make(handler, min_interval_seconds=5)
+    result = fetcher.fetch("https://a.example/old")
+    assert (result.status, result.html) == (OK, PAGE)
+    assert calls == ["a.example/old", "a.example/new"]
+    assert clock.sleeps == [5.0]
+
+
+@pytest.mark.parametrize(
+    "location",
+    ["https://a.example/new", "https://www.a.example/new", "http://a.example/new", "new"],
+)
+def test_same_host_covers_absolute_www_and_scheme_changes_and_relative_targets(location):
+    handler, calls = redirecting({"a.example/old": (302, location), "www.a.example/old": (302, location)})
+    fetcher, _ = make(handler)
+    assert fetcher.fetch("https://a.example/old").status == OK
+    assert len(calls) == 2 and calls[1].endswith("/new")
+
+
+def test_a_redirect_to_another_site_is_an_error_and_that_site_gets_no_request():
+    handler, calls = redirecting({"a.example/old": (301, "https://b.example/product")})
+    fetcher, _ = make(handler)
+    result = fetcher.fetch("https://a.example/old")
+    assert (result.status, result.http_status, result.html) == (FETCH_ERROR, 301, None)
+    assert result.error == "redirected to another site: b.example"
+    assert calls == ["a.example/old"]
+
+
+def test_an_injected_client_that_follows_redirects_itself_is_not_trusted_to():
+    handler, calls = redirecting({"a.example/old": (301, "https://b.example/product")})
+    clock = FakeClock()
+    client = httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=True)
+    fetcher = Fetcher(Settings(respect_robots_txt=False), client=client, clock=clock.now, sleep=clock.sleep)
+    assert fetcher.fetch("https://a.example/old").error == "redirected to another site: b.example"
+    assert calls == ["a.example/old"]
+
+
+def test_a_same_host_redirect_to_a_path_robots_disallows_is_disallowed():
+    handler, calls = redirecting(
+        {
+            "a.example/robots.txt": (200, "User-agent: *\nDisallow: /private/\n"),
+            "a.example/old": (301, "/private/x"),
+        }
+    )
+    fetcher, _ = make(handler, respect_robots_txt=True, min_interval_seconds=0)
+    result = fetcher.fetch("https://a.example/old")
+    assert (result.status, result.error) == (DISALLOWED, "disallowed by robots.txt")
+    assert calls == ["a.example/robots.txt", "a.example/old"]
+
+
+def test_a_redirect_loop_gives_up():
+    handler, calls = redirecting({"a.example/a": (302, "/b"), "a.example/b": (302, "/a")})
+    fetcher, _ = make(handler)
+    result = fetcher.fetch("https://a.example/a")
+    assert (result.status, result.error) == (FETCH_ERROR, "too many redirects")
+    assert len(calls) == 6  # the first request and five hops
+
+
+def test_five_hops_are_allowed_and_do_not_use_up_the_retries():
+    routes = {f"a.example/{n}": (302, f"/{n + 1}") for n in range(5)}
+    handler, calls = redirecting(routes)
+    fetcher, clock = make(handler, retries=0, min_interval_seconds=0)
+    assert fetcher.fetch("https://a.example/0").status == OK
+    assert len(calls) == 6 and clock.sleeps == []
+
+
+def test_a_redirect_without_a_location_is_a_fetch_error():
+    handler, calls = redirecting({"a.example/old": (302, "")})
+    fetcher, _ = make(handler)
+    result = fetcher.fetch("https://a.example/old")
+    assert (result.status, result.http_status, result.error) == (FETCH_ERROR, 302, "HTTP 302")
+    assert len(calls) == 1
+
+
+def test_robots_txt_that_redirects_on_the_same_host_is_followed_once():
+    handler, calls = redirecting(
+        {
+            "a.example/robots.txt": (301, "/rules.txt"),
+            "a.example/rules.txt": (200, "User-agent: *\nDisallow: /private/\n"),
+        }
+    )
+    fetcher, _ = make(handler, respect_robots_txt=True, min_interval_seconds=0)
+    assert fetcher.fetch("https://a.example/private/x").status == DISALLOWED
+    assert calls == ["a.example/robots.txt", "a.example/rules.txt"]
+
+
+def test_robots_txt_redirecting_elsewhere_or_twice_means_no_rules():
+    handler, calls = redirecting({"a.example/robots.txt": (301, "https://b.example/robots.txt")})
+    fetcher, _ = make(handler, respect_robots_txt=True, min_interval_seconds=0)
+    assert fetcher.fetch("https://a.example/p/1").status == OK
+    assert "b.example/robots.txt" not in calls
+
+    handler, calls = redirecting(
+        {
+            "a.example/robots.txt": (301, "/one.txt"),
+            "a.example/one.txt": (301, "/two.txt"),
+            "a.example/two.txt": (200, "User-agent: *\nDisallow: /\n"),
+        }
+    )
+    fetcher, _ = make(handler, respect_robots_txt=True, min_interval_seconds=0)
+    assert fetcher.fetch("https://a.example/p/1").status == OK
+    assert "a.example/two.txt" not in calls
 
 
 import sys
