@@ -4,6 +4,7 @@ from helpers import Site, make_fetcher, page
 
 from pricemon import cli
 from pricemon.models import BLOCKED, OK, FetchResult
+from pricemon.store import Store
 
 A = "https://a.example/p/drill"
 B = "https://b.example/p/drill"
@@ -326,3 +327,55 @@ def test_test_notify_uses_the_real_notifier_with_fake_senders(project, capsys, m
     )
     assert cli.main(["test-notify", "clients/acme-shop.yaml"]) == 0
     assert len(outbox.emails) == 2 and len(outbox.telegrams) == 2
+
+
+# accept
+
+
+def hold_a_price(project, monkeypatch):
+    """Two real runs where A falls from 129.00 to 12.90, so the second run holds it."""
+    site = Site({A: (200, page("129.00")), B: (200, page("125.00"))})
+    monkeypatch.setattr(cli, "build_fetcher", lambda settings: make_fetcher(site))
+    cli.main(["run", "clients/acme-shop.yaml"])
+    site.pages[A] = (200, page("12.90"))
+    cli.main(["run", "clients/acme-shop.yaml"])
+    return site
+
+
+def test_accept_makes_a_held_price_the_baseline(project, capsys, monkeypatch):
+    hold_a_price(project, monkeypatch)
+    capsys.readouterr()
+    assert cli.main(["accept", "clients/acme-shop.yaml", A]) == 0
+    assert capsys.readouterr().out.strip() == (
+        f"Accepted {A}: 12.90 EUR is the new baseline. The client will be told in the next run's digest."
+    )
+    store = Store(project / "data" / "acme-shop" / "pricemon.db")
+    try:
+        assert store.latest_observation(A).status == OK
+        assert [e.type for e in store.undelivered_events(2)] == ["price_down"]
+    finally:
+        store.close()
+
+
+def test_accept_with_nothing_held_returns_1(project, capsys, monkeypatch):
+    hold_a_price(project, monkeypatch)
+    capsys.readouterr()
+    assert cli.main(["accept", "clients/acme-shop.yaml", B]) == 1
+    assert capsys.readouterr().err.strip() == f"Nothing to accept for {B}"
+    assert cli.main(["accept", "clients/acme-shop.yaml", A]) == 0
+    capsys.readouterr()
+    assert cli.main(["accept", "clients/acme-shop.yaml", A]) == 1  # already accepted
+    assert "Nothing to accept" in capsys.readouterr().err
+
+
+def test_accept_rejects_a_url_that_is_not_in_the_config(project, capsys, monkeypatch):
+    hold_a_price(project, monkeypatch)
+    capsys.readouterr()
+    assert cli.main(["accept", "clients/acme-shop.yaml", "https://other.example/p/1"]) == 1
+    assert capsys.readouterr().err.strip() == "URL is not in this client's config"
+
+
+def test_accept_without_any_data_returns_1(project, capsys):
+    assert cli.main(["accept", "clients/acme-shop.yaml", A]) == 1
+    assert "Nothing to accept" in capsys.readouterr().err
+    assert not (project / "data").exists()  # and does not create an empty database

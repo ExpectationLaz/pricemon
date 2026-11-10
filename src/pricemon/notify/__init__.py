@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 from ..config import ClientConfig, Settings, hostname
-from ..models import OK, Event
+from ..models import OK, VERIFY, Event
 from ..store import Store
 from .email import send_email
 from .telegram import send_telegram
@@ -62,7 +62,7 @@ def operator_digest(
     include_dry_runs = bool(store.run(run_id)["dry_run"])
     lines = [f"DELIVERY {problem}" for problem in delivery_problems]
     for obs in store.run_observations(run_id):
-        if obs.status == OK:
+        if obs.status in (OK, VERIFY):  # a held price has its own VERIFY line
             continue
         failures = store.consecutive_failures(obs.url, up_to_run_id=run_id, include_dry_runs=include_dry_runs)
         # Alert when the streak reaches the threshold, and again every `threshold`

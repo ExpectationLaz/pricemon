@@ -20,7 +20,7 @@ from .config import (
 )
 from .extract import ExtractError, extract
 from .fetch import Fetcher
-from .models import BLOCKED, DISALLOWED, FETCH_ERROR, NOT_FOUND, OK, RunSummary
+from .models import BLOCKED, DISALLOWED, FETCH_ERROR, NOT_FOUND, OK, VERIFY, RunSummary
 from .notify import Notifier
 from .report import write_report
 from .runner import run_client
@@ -95,6 +95,34 @@ def cmd_test_notify(args) -> int:
             print(f"{label}: FAILED: {detail}")
     configured = [outcome for _, outcome, _ in results if outcome is not None]
     return 0 if configured and all(configured) else 1
+
+
+def cmd_accept(args) -> int:
+    config = load_client(args.config)
+    urls = {url for product in config.products for url in product.urls}
+    if args.url not in urls:
+        print("URL is not in this client's config", file=sys.stderr)
+        return 1
+    db_path = DATA_DIR / config.client / "pricemon.db"
+    held = None
+    if db_path.exists():
+        store = Store(db_path)
+        try:
+            latest = store.latest_observation(args.url)
+            if latest is not None and latest.status == VERIFY:
+                held = latest
+                store.accept_observation(latest.id, list(config.alerts.events))
+        finally:
+            store.close()
+    if held is None:
+        print(f"Nothing to accept for {args.url}", file=sys.stderr)
+        return 1
+    price = f"{held.price} {held.currency}" if held.currency else f"{held.price}"
+    print(
+        f"Accepted {args.url}: {price} is the new baseline. "
+        "The client will be told in the next run's digest."
+    )
+    return 0
 
 
 def cmd_check_url(args) -> int:
@@ -202,6 +230,11 @@ def build_parser() -> argparse.ArgumentParser:
     test_notify = commands.add_parser("test-notify", help="send a test message through every channel of a client")
     test_notify.add_argument("config", type=Path)
     test_notify.set_defaults(handler=cmd_test_notify)
+
+    accept = commands.add_parser("accept", help="accept a price that was held for verification")
+    accept.add_argument("config", type=Path)
+    accept.add_argument("url")
+    accept.set_defaults(handler=cmd_accept)
 
     validate = commands.add_parser("validate", help="check a client config without fetching anything")
     validate.add_argument("config", type=Path)

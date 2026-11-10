@@ -223,3 +223,35 @@ def test_a_database_from_before_delivery_tracking_is_upgraded(tmp_path):
     finally:
         upgraded.close()
     Store(path).close()  # opening an upgraded database again does not fail
+
+
+# held observations
+
+
+def test_latest_observation_is_the_newest_real_one_whatever_its_status(store):
+    assert store.latest_observation(A) is None
+    first = store.start_run("2026-11-10T07:00:00+00:00")
+    store.add_observation(first, ok(A, "119"))
+    second = store.start_run("2026-11-11T07:00:00+00:00")
+    failure = store.add_observation(second, failed(A))
+    dry = store.start_run("2026-11-12T07:00:00+00:00", dry_run=True)
+    store.add_observation(dry, ok(A, "5"))
+    assert store.latest_observation(A).id == failure.id
+    assert store.latest_observation(B) is None
+
+
+def test_accept_observation_makes_it_ok_and_queues_only_the_chosen_event_types(store):
+    run_id = store.start_run("2026-11-10T07:00:00+00:00")
+    held = store.add_observation(run_id, ok(A, "12.90"))
+    store.db.execute("UPDATE observations SET status = 'verify', error = 'held' WHERE id = ?", (held.id,))
+    price = alerted_event(alerted=False)
+    stock = alerted_event(kind="out_of_stock", alerted=False)
+    store.add_event(run_id, held.id, price)
+    store.add_event(run_id, held.id, stock)
+    store.db.execute("UPDATE events SET delivered = 1")  # whatever it was before, it is queued afresh
+    store.accept_observation(held.id, ["price_down", "price_up"])
+    accepted = store.latest_observation(A)
+    assert (accepted.status, accepted.error) == (OK, None)
+    assert [(e.type, e.alerted) for e in store.run_events(run_id)] == [("price_down", True), ("out_of_stock", False)]
+    assert [e.type for e in store.undelivered_events(run_id)] == ["price_down"]
+    assert store.last_ok(A).price == Decimal("12.90")

@@ -1,5 +1,6 @@
 """Orchestrates one run for one client. The only module that knows the stage order."""
 
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -7,7 +8,7 @@ from .config import ClientConfig, SiteRules, hostname, rules_for
 from .detect import detect
 from .extract import extract
 from .fetch import Fetcher
-from .models import EXTRACT_ERROR, FETCH_ERROR, OK, Observation, RunSummary
+from .models import EXTRACT_ERROR, FETCH_ERROR, OK, VERIFY, Observation, RunSummary
 from .report import write_report
 from .store import Store
 
@@ -82,13 +83,25 @@ def run_client(
             observation = observe(url, product_name, fetcher, rules_for(url, site_rules), now)
             # A real run ignores dry runs; a dry run sees everything, as a preview.
             previous = store.last_ok(url, include_dry_runs=dry_run)
+            events = detect(previous, observation, config.alerts) if observation.status == OK else []
+            suspect = next((event for event in events if event.verify), None)
+            if suspect is not None:
+                # A price that jumped this far is probably a layout change. Hold it: it is
+                # never a baseline, and the client is told nothing until the operator accepts it.
+                observation = replace(
+                    observation,
+                    status=VERIFY,
+                    error=f"price changed by {suspect.change_pct}% ({suspect.old_price:.2f} to "
+                    f"{suspect.new_price:.2f}): held for verification",
+                )
+                events = [replace(event, alerted=False) for event in events]
             saved = store.add_observation(run_id, observation)
             summary.urls_total += 1
-            if saved.status != OK:
+            if saved.status == OK:
+                summary.urls_ok += 1
+            else:
                 summary.urls_failed += 1
-                continue
-            summary.urls_ok += 1
-            for event in detect(previous, saved, config.alerts):
+            for event in events:
                 store.add_event(run_id, saved.id, event)
                 summary.events.append(event)
         store.finish_run(run_id, now().isoformat(), summary.urls_total, summary.urls_ok, summary.urls_failed)
