@@ -74,7 +74,12 @@ requests is declined, with or without the browser. That needs the optional brows
    digits and hyphens.
 2. Check it: `.venv/Scripts/pricemon.exe validate clients/<client>.yaml`
 3. Run `check-url` on one URL per competitor site. Write a site rules file for
-   each site that needs one.
+   each site that needs one. Open the same page in a browser and compare the
+   price: a site's own structured data can be wrong (a real shop showed
+   £31.90 on the page and £22 in its structured data). If they differ, write a
+   site rules file with `skip_structured_data: true` and a `price` selector.
+   Do not base a stock rule on text that is only hidden by CSS, such as an
+   "Out of stock" label every page carries.
 4. Prove that delivery works, before the first real alert:
    `.venv/Scripts/pricemon.exe test-notify clients/<client>.yaml`
    It sends a short test message through every channel: the client's email and
