@@ -26,6 +26,25 @@ def test_parse_price(text, expected):
     assert parse_price(text) == Decimal(expected)
 
 
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("12,50 15,00", "12.50"),
+        ("Was 20.00 15.00", "20.00"),
+        ("12.99 2 left", "12.99"),
+        ("10 20", "10"),
+        ("12.99 200 left", "12.99"),
+        ("1 299 000,50", "1299000.50"),
+        ("0.125", "0.125"),
+        ("0,125", "0.125"),
+        ("1234.567", "1234.567"),
+        ("1234,567", "1234.567"),
+    ],
+)
+def test_parse_price_does_not_merge_or_misread_numbers(text, expected):
+    assert parse_price(text) == Decimal(expected)
+
+
 def test_decimal_separator_override():
     assert parse_price("1.299", decimal_separator=".") == Decimal("1.299")
     assert parse_price("1,299", decimal_separator=",") == Decimal("1.299")
@@ -52,7 +71,7 @@ def test_parse_structured_price(value, expected):
     assert parse_structured_price(value) == Decimal(expected)
 
 
-@pytest.mark.parametrize("value", [0, "0.00", None, True, "", "n/a", [], -3])
+@pytest.mark.parametrize("value", [0, "0.00", None, True, "", "n/a", [], -3, float("nan"), float("inf")])
 def test_parse_structured_price_rejects(value):
     with pytest.raises(PriceError):
         parse_structured_price(value)
