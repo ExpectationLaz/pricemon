@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# secrets and local settings
+.env
+settings.yaml
+
+# client configs and client data
+clients/*
+!clients/example.yaml
+data/
