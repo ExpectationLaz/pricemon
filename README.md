@@ -4,6 +4,75 @@ Checks competitor product pages once a day for a client. Each run stores the
 prices and stock status, writes an Excel and CSV report, and sends the client a
 digest of what changed by email and Telegram.
 
+## What it does
+
+- **Reads prices and stock** from product pages: first from the structured
+  data shops publish for search engines, then from per-site rules for shops
+  that don't publish it.
+- **Keeps the history** in a local SQLite database, one per client.
+- **Decides what is worth an alert.** Tiny changes are ignored. A suspicious
+  jump, such as a 90% drop that usually means the page layout changed, is
+  held until a person checks it.
+- **Reports and alerts.** It writes a daily Excel report (Prices, Changes and
+  Problems sheets) and sends one digest per run by email or Telegram. An alert
+  that cannot be delivered is kept and sent in the next run.
+- **Stays polite and honest.** One request at a time, a pause between requests
+  to the same site, `robots.txt` respected. A site that blocks automated
+  requests is reported as unsupported; the tool never tries to get past bot
+  protection.
+
+## Sample output
+
+From the demo below, which uses fictional shops. The digest the client
+receives:
+
+```
+demo-coffee-shop: 3 changes today
+
+Hand grinder C40 at grindstore.example: 219.00 to 199.00 GBP, down 9.1%
+Gooseneck kettle 0.9 l at beanbarn.example: out of stock
+Pour-over dripper V60 at brewhouse.example: 22.50 to 25.00 GBP, up 11.1%
+
+1 of 9 pages could not be checked today.
+```
+
+Part of the report's Prices sheet:
+
+| Product | Own price | Competitor | Price | In stock | Previous price | Change % | Status |
+|---|---|---|---|---|---|---|---|
+| Hand grinder C40 | 229.00 | grindstore.example | 199.00 | yes | 219.00 | -9.13 | ok |
+| Hand grinder C40 | 229.00 | brewhouse.example | 229.00 | yes | 229.00 | 0.00 | ok |
+| Gooseneck kettle 0.9 l | 159.00 | beanbarn.example | 149.95 | no | 149.95 | 0.00 | ok |
+| Pour-over dripper V60 | 24.00 | beanbarn.example | 23.00 | yes | | | blocked |
+
+The blocked row keeps its last known price, and the operator gets a separate
+alert about it.
+
+## Try it
+
+```bash
+py -3.13 -m venv .venv
+.venv/Scripts/python.exe -m pip install -e ".[dev]"
+.venv/Scripts/python.exe demo/make_demo.py
+.venv/Scripts/python.exe -m pytest -q
+```
+
+The demo runs the real pipeline twice against fictional shops served from
+memory, without touching the network, and writes a sample report and both
+digests to `demo-output/`. The test suite runs offline too.
+
+## Project layout
+
+| Path | Contents |
+|---|---|
+| `src/pricemon/` | The engine: config, fetch, extract, store, detect, report, notify, runner, command line |
+| `tests/` | Offline tests for every stage, plus end-to-end runs |
+| `demo/` | The fictional-shop demo |
+| `docs/superpowers/specs/` | The design spec, kept current with the code |
+| `docs/superpowers/plans/` | The original build plan; historical, since review changed parts of it |
+
+The rest of this file is the operator guide.
+
 ## Setup
 
 ```bash
