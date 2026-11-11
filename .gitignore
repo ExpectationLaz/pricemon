@@ -17,3 +17,6 @@ data/
 
 # build metadata
 *.egg-info/
+
+# portfolio demo output
+demo-output/
